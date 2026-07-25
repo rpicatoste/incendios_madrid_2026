@@ -25,6 +25,8 @@ type AirStation = {
   value: number | null;
   index?: number;
   incomplete?: boolean;
+  observedAt?: string | null;
+  delayed?: boolean;
   hour: string | null;
 };
 
@@ -37,6 +39,12 @@ type ForecastHour = {
   rainProbability: number;
   rain: number;
   wind: number;
+  windDirection: number;
+};
+
+type ForecastCacheEntry = {
+  expiresAt: number;
+  rows: ForecastHour[];
   windDirection: number;
 };
 
@@ -120,6 +128,15 @@ const JCYL_FIRE_URL =
   "https://analisis.datosabiertos.jcyl.es/explore/dataset/incendios-forestales/";
 const FIDIAS_URL =
   "https://fidias.castillalamancha.es/consulta/forms/fidif001.php?auth=ANONIMO";
+
+const REFRESH_INTERVALS = {
+  status: 2 * 60 * 1000,
+  region: 5 * 60 * 1000,
+  satellite: 5 * 60 * 1000,
+  news: 5 * 60 * 1000,
+  air: 15 * 60 * 1000,
+  forecast: 15 * 60 * 1000,
+} as const;
 
 const fallbackStatus: LiveStatus = {
   lastUpdated: "24 de julio · 23:30 h",
@@ -212,7 +229,7 @@ export default function Dashboard() {
   const forecastMarkerRef = useRef<any>(null);
   const canvasRendererRef = useRef<any>(null);
   const forecastRequestRef = useRef<AbortController | null>(null);
-  const forecastCacheRef = useRef<Map<string, ForecastHour[]>>(new Map());
+  const forecastCacheRef = useRef<Map<string, ForecastCacheEntry>>(new Map());
 
   const [liveStatus, setLiveStatus] = useState<LiveStatus>(fallbackStatus);
   const [liveAirStations, setLiveAirStations] = useState<AirStation[]>([]);
@@ -240,6 +257,7 @@ export default function Dashboard() {
   const [selectedPoint, setSelectedPoint] = useState<{ lat: number; lon: number; label: string } | null>(null);
   const [forecast, setForecast] = useState<ForecastHour[]>([]);
   const [forecastState, setForecastState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [forecastWindDirection, setForecastWindDirection] = useState<number | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [activeList, setActiveList] = useState<StatusKind>("evacuado");
@@ -266,6 +284,11 @@ export default function Dashboard() {
     : isLive && liveSatellite
       ? "live"
       : null;
+  const rawWindDirection = forecastWindDirection;
+  const currentWindDirection =
+    typeof rawWindDirection === "number" && Number.isFinite(rawWindDirection)
+      ? Math.round(((rawWindDirection % 360) + 360) % 360)
+      : null;
 
   const visiblePoints = useMemo(
     () => displayRegion.points.filter((point) => point.kind === activeList),
@@ -282,40 +305,54 @@ export default function Dashboard() {
     [displayRegion.points],
   );
 
-  const requestForecast = useCallback(async (lat: number, lon: number, label?: string) => {
+  const requestForecast = useCallback(async (
+    lat: number,
+    lon: number,
+    label?: string,
+    force = false,
+  ) => {
     const cacheKey = `${lat.toFixed(3)},${lon.toFixed(3)}`;
-    setSelectedPoint({
-      lat,
-      lon,
-      label: label || `${lat.toFixed(4)}, ${lon.toFixed(4)}`,
-    });
-    setPanelOpen(true);
+    if (!force) {
+      setSelectedPoint({
+        lat,
+        lon,
+        label: label || `${lat.toFixed(4)}, ${lon.toFixed(4)}`,
+      });
+      setPanelOpen(true);
+    }
+    forecastRequestRef.current?.abort();
     const cachedForecast = forecastCacheRef.current.get(cacheKey);
-    if (cachedForecast) {
-      setForecast(cachedForecast);
+    if (!force && cachedForecast && cachedForecast.expiresAt > Date.now()) {
+      setForecast(cachedForecast.rows);
+      setForecastWindDirection(cachedForecast.windDirection);
       setForecastState("ready");
       return;
     }
+    if (cachedForecast) forecastCacheRef.current.delete(cacheKey);
 
-    forecastRequestRef.current?.abort();
     const controller = new AbortController();
     forecastRequestRef.current = controller;
-    setForecastState("loading");
+    if (!force) {
+      setForecast([]);
+      setForecastWindDirection(null);
+      setForecastState("loading");
+    }
     try {
       const params = new URLSearchParams({
         latitude: String(lat),
         longitude: String(lon),
+        current: "wind_direction_10m",
         hourly:
           "cloud_cover,sunshine_duration,weather_code,is_day,precipitation_probability,precipitation,wind_speed_10m,wind_direction_10m",
-        forecast_days: "2",
+        forecast_hours: "12",
         timezone: "auto",
       });
-      const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`, {
+      const response = await fetch("https://api.open-meteo.com/v1/forecast?" + params.toString(), {
+        cache: "no-store",
         signal: controller.signal,
       });
       if (!response.ok) throw new Error("Forecast unavailable");
       const data = await response.json();
-      const now = Date.now() - 60 * 60 * 1000;
       const rows: ForecastHour[] = data.hourly.time
         .map((time: string, index: number) => ({
           time,
@@ -328,24 +365,51 @@ export default function Dashboard() {
           wind: Math.round(data.hourly.wind_speed_10m[index] ?? 0),
           windDirection: data.hourly.wind_direction_10m[index] ?? 0,
         }))
-        .filter((row: ForecastHour) => new Date(row.time).getTime() >= now)
         .slice(0, 12);
+      const currentDirection = Number(data.current?.wind_direction_10m);
+      const windDirection = Number.isFinite(currentDirection)
+        ? currentDirection
+        : rows[0]?.windDirection;
+      if (!rows.length || typeof windDirection !== "number" || !Number.isFinite(windDirection)) {
+        throw new Error("Forecast returned no current hours or wind direction");
+      }
       if (forecastCacheRef.current.size >= 12) {
         const oldestKey = forecastCacheRef.current.keys().next().value;
         if (oldestKey) forecastCacheRef.current.delete(oldestKey);
       }
-      forecastCacheRef.current.set(cacheKey, rows);
+      forecastCacheRef.current.set(cacheKey, {
+        expiresAt: Date.now() + REFRESH_INTERVALS.forecast,
+        rows,
+        windDirection,
+      });
       setForecast(rows);
+      setForecastWindDirection(windDirection);
       setForecastState("ready");
       setWeatherReadAt(new Date().toISOString());
     } catch (error) {
       if ((error as Error).name === "AbortError") return;
-      setForecast([]);
-      setForecastState("error");
+      if (!force) {
+        setForecast([]);
+        setForecastWindDirection(null);
+        setForecastState("error");
+      }
     } finally {
       if (forecastRequestRef.current === controller) forecastRequestRef.current = null;
     }
   }, []);
+
+  useEffect(() => {
+    if (!panelOpen || !selectedPoint) return;
+    const interval = window.setInterval(() => {
+      void requestForecast(
+        selectedPoint.lat,
+        selectedPoint.lon,
+        selectedPoint.label,
+        true,
+      );
+    }, REFRESH_INTERVALS.forecast);
+    return () => window.clearInterval(interval);
+  }, [panelOpen, requestForecast, selectedPoint]);
 
   const updateUserMarker = useCallback((latitude: number, longitude: number) => {
     if (!mapRef.current || !window.L) return;
@@ -374,75 +438,109 @@ export default function Dashboard() {
 
   useEffect(() => {
     let active = true;
-    const refreshLiveData = async () => {
-      const [
-        statusResult,
-        airResult,
-        regionResult,
-        satelliteResult,
-        snapshotsResult,
-        newsResult,
-      ] = await Promise.allSettled([
-        fetch("/api/status").then((response) => response.json()),
-        fetch("/api/air").then((response) => response.json()),
-        fetch("/api/region").then((response) => response.json()),
-        fetch("/api/satellite?hour=live&layer=manifest", { cache: "no-store" }).then(
-          (response) => {
-            if (!response.ok) throw new Error("Caché satelital aún no disponible");
-            return response.json();
-          },
-        ),
-        fetch("/api/snapshots", { cache: "no-store" }).then((response) => response.json()),
-        fetch("/api/news").then((response) => response.json()),
+
+    const readJson = async (path: string) => {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 20000);
+      try {
+        const response = await fetch(path, { cache: "no-store", signal: controller.signal });
+        if (!response.ok) throw new Error("No se pudo actualizar una fuente interna");
+        return response.json();
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    };
+
+    const refreshStatus = async () => {
+      try {
+        const status = (await readJson("/api/status")) as LiveStatus;
+        if (active) setLiveStatus(status);
+      } catch {}
+    };
+
+    const refreshAir = async () => {
+      try {
+        const payload = (await readJson("/api/air")) as {
+          stations?: AirStation[];
+          fetchedAt?: string;
+        };
+        if (!active) return;
+        if (payload.stations?.length) setLiveAirStations(payload.stations);
+        setAirSourceReadAt(payload.fetchedAt || "");
+      } catch {}
+    };
+
+    const refreshRegion = async () => {
+      try {
+        const region = (await readJson("/api/region")) as RegionData & { fetchedAt?: string };
+        if (!active) return;
+        setLiveRegion(region);
+        setRegionReadAt(region.fetchedAt || "");
+      } catch {}
+    };
+
+    const refreshSatellite = async () => {
+      const [manifestResult, snapshotsResult] = await Promise.allSettled([
+        readJson("/api/satellite?hour=live&layer=manifest"),
+        readJson("/api/snapshots"),
       ]);
       if (!active) return;
-
-      const status =
-        statusResult.status === "fulfilled" ? (statusResult.value as LiveStatus) : liveStatus;
-      const airStations =
-        airResult.status === "fulfilled"
-          ? ((airResult.value as { stations?: AirStation[] }).stations || [])
-          : liveAirStations;
-      const region =
-        regionResult.status === "fulfilled" ? (regionResult.value as RegionData) : liveRegion;
-
-      setLiveStatus(status);
-      setLiveAirStations(airStations);
-      setLiveRegion(region);
-      if (airResult.status === "fulfilled") {
-        setAirSourceReadAt((airResult.value as { fetchedAt?: string }).fetchedAt || "");
-      }
-      if (regionResult.status === "fulfilled") {
-        setRegionReadAt((regionResult.value as RegionData & { fetchedAt?: string }).fetchedAt || "");
-      }
-      if (satelliteResult.status === "fulfilled") setLiveSatellite(satelliteResult.value);
+      if (manifestResult.status === "fulfilled") setLiveSatellite(manifestResult.value);
       if (snapshotsResult.status === "fulfilled") {
         setSnapshots((snapshotsResult.value as { snapshots?: SnapshotRecord[] }).snapshots || []);
       }
-      if (newsResult.status === "fulfilled") {
-        const newsPayload = newsResult.value as {
+    };
+
+    const refreshNews = async () => {
+      try {
+        const payload = (await readJson("/api/news")) as {
           items?: OfficialNews[];
           incidents?: OfficialIncident[];
           readAt?: string;
           sourceReads?: Record<string, SourceRead>;
         };
-        setOfficialNews(newsPayload.items || []);
-        setOfficialIncidents(newsPayload.incidents || []);
-        setSourceReads(newsPayload.sourceReads || {});
-        setNewsReadAt(newsPayload.readAt || "");
-      }
+        if (!active) return;
+        setOfficialNews(payload.items || []);
+        setOfficialIncidents(payload.incidents || []);
+        setSourceReads(payload.sourceReads || {});
+        setNewsReadAt(payload.readAt || "");
+      } catch {}
     };
 
-    refreshLiveData();
-    const interval = window.setInterval(refreshLiveData, 5 * 60 * 1000);
-    window.addEventListener("online", refreshLiveData);
+    const refreshAll = () => {
+      void Promise.allSettled([
+        refreshStatus(),
+        refreshAir(),
+        refreshRegion(),
+        refreshSatellite(),
+        refreshNews(),
+      ]);
+    };
+    const refreshWhenVisible = () => {
+      if (!document.hidden) refreshAll();
+    };
+
+    const scheduleRefresh = (refresh: () => Promise<void>, interval: number) =>
+      window.setInterval(() => {
+        if (!document.hidden) void refresh();
+      }, interval);
+
+    refreshWhenVisible();
+    const intervals = [
+      scheduleRefresh(refreshStatus, REFRESH_INTERVALS.status),
+      scheduleRefresh(refreshRegion, REFRESH_INTERVALS.region),
+      scheduleRefresh(refreshSatellite, REFRESH_INTERVALS.satellite),
+      scheduleRefresh(refreshNews, REFRESH_INTERVALS.news),
+      scheduleRefresh(refreshAir, REFRESH_INTERVALS.air),
+    ];
+    window.addEventListener("online", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       active = false;
-      window.clearInterval(interval);
-      window.removeEventListener("online", refreshLiveData);
+      intervals.forEach((interval) => window.clearInterval(interval));
+      window.removeEventListener("online", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-    // Los valores de fallback se usan sólo si una fuente falla durante esta llamada.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -570,23 +668,33 @@ export default function Dashboard() {
   useEffect(() => {
     if (!mapReady || !mapRef.current || !window.L || !selectedPoint) return;
     const latLng: [number, number] = [selectedPoint.lat, selectedPoint.lon];
+    const pendingClass = currentWindDirection === null ? " is-pending" : "";
+    const icon = window.L.divIcon({
+      className: "foco-map-icon",
+      html:
+        '<span class="forecast-point-symbol forecast-point-symbol--map' +
+        pendingClass +
+        '" aria-hidden="true"><i class="forecast-wind-arrow" style="transform:rotate(' +
+        (currentWindDirection ?? 0) +
+        'deg)">↑</i></span>',
+      iconSize: [30, 30],
+      iconAnchor: [15, 15],
+    });
     if (forecastMarkerRef.current) {
-      forecastMarkerRef.current.setLatLng(latLng).addTo(mapRef.current);
+      forecastMarkerRef.current
+        .setLatLng(latLng)
+        .setIcon(icon)
+        .addTo(mapRef.current);
       return;
     }
     forecastMarkerRef.current = window.L.marker(latLng, {
-      icon: window.L.divIcon({
-        className: "foco-map-icon",
-        html: '<span class="forecast-point-symbol forecast-point-symbol--map" aria-hidden="true"></span>',
-        iconSize: [30, 30],
-        iconAnchor: [15, 15],
-      }),
+      icon,
       pane: "foco-forecast-point",
       interactive: false,
       keyboard: false,
       zIndexOffset: 2200,
     }).addTo(mapRef.current);
-  }, [mapReady, selectedPoint]);
+  }, [currentWindDirection, mapReady, selectedPoint]);
 
   useEffect(() => {
     let active = true;
@@ -688,6 +796,7 @@ export default function Dashboard() {
     if (areaFeature) {
       L.geoJSON(areaFeature, {
         renderer: canvasRendererRef.current,
+        bubblingMouseEvents: false,
         style: {
           color: "#713a31",
           weight: 1.2,
@@ -724,6 +833,7 @@ export default function Dashboard() {
         { type: "FeatureCollection", features: frontFeatures },
         {
           renderer: canvasRendererRef.current,
+          bubblingMouseEvents: false,
           style: (feature: any) =>
             feature?.properties?.kind === "fire-front"
               ? { color: "#ffcc3d", weight: 4, opacity: 0.95, dashArray: "8 5" }
@@ -735,6 +845,7 @@ export default function Dashboard() {
               color: "#fff1ad",
               weight: 1,
               fillColor: "#ff5a32",
+              bubblingMouseEvents: false,
               fillOpacity: 0.95,
             }),
           onEachFeature: (feature: any, layer: any) => {
@@ -743,9 +854,6 @@ export default function Dashboard() {
               .bindPopup(
                 `<div class="foco-popup"><span class="popup-kicker" style="color:#d88713">COPERNICUS · ${isFront ? "FRENTE OBSERVADO" : "LLAMA ACTIVA OBSERVADA"}</span><strong>La Mierla · Guadalajara</strong><p>${isFront ? "Línea de frente de la última observación que incluye esta geometría." : "Detección puntual incluida en el producto más reciente."}</p><small>Observado ${escapeHtml(isFront ? observedFront : observedArea)} · no equivale a posición actual en tiempo real</small></div>`,
                 { closeButton: false },
-              )
-              .on("click", (event: any) =>
-                requestForecast(event.latlng.lat, event.latlng.lng),
               );
           },
         },
@@ -768,16 +876,16 @@ export default function Dashboard() {
           iconSize: [34, 34],
           iconAnchor: [17, 17],
         }),
+        bubblingMouseEvents: false,
       });
       marker
         .bindPopup(
           `<div class="foco-popup"><span class="popup-kicker" style="color:${meta.color}">${meta.label} · ${escapeHtml(point.province)}</span><strong>${escapeHtml(point.name)}</strong><p>${escapeHtml(point.detail)}</p><small>${escapeHtml(point.sourceLabel)} · ${escapeHtml(point.sourceUpdatedAt)}<br>Punto representativo geocodificado; no es un perímetro oficial.</small></div>`,
           { closeButton: false, offset: [0, -9] },
         )
-        .on("click", () => requestForecast(point.lat, point.lon, point.name))
         .addTo(situationLayerRef.current);
     });
-  }, [activeKinds, displayRegion.points, mapReady, requestForecast]);
+  }, [activeKinds, displayRegion.points, mapReady]);
 
   useEffect(() => {
     if (!mapReady || !fireAreaLayerRef.current || !window.L) return;
@@ -796,6 +904,7 @@ export default function Dashboard() {
         dashArray: "7 7",
         fillColor: "#ff6a4d",
         fillOpacity: 0.16,
+        bubblingMouseEvents: false,
       });
       circle
         .bindTooltip(`${escapeHtml(fire.name)}${areaLabel}`, {
@@ -829,13 +938,12 @@ export default function Dashboard() {
         bubblingMouseEvents: false,
       })
         .bindPopup(
-          `<div class="foco-popup"><span class="popup-kicker" style="color:${escapeHtml(station.color)}">ICA ${station.index || "—"} · ${escapeHtml(station.label)}</span><strong>${escapeHtml(station.name)}</strong><p>Contaminante dominante: ${escapeHtml(station.pollutant || "sin dato")}${station.incomplete ? " · índice con datos parciales" : ""}</p><small>${escapeHtml(station.hour || "Sin lectura reciente")} · MITECO, dato provisional</small></div>`,
+          `<div class="foco-popup"><span class="popup-kicker" style="color:${escapeHtml(station.color)}">ICA ${station.index || "—"} · ${escapeHtml(station.label)}</span><strong>${escapeHtml(station.name)}</strong><p>Contaminante dominante: ${escapeHtml(station.pollutant || "sin dato")}${station.incomplete ? " · índice con datos parciales" : ""}</p><small>${escapeHtml(station.hour || "Sin lectura reciente")}${station.delayed ? " · fuente con retraso" : ""} · MITECO, dato provisional</small></div>`,
           { closeButton: false, offset: [0, -10] },
         )
-        .on("click", () => requestForecast(station.lat, station.lon, station.name))
         .addTo(airLayerRef.current);
     });
-  }, [displayAirStations, mapReady, requestForecast]);
+  }, [displayAirStations, mapReady]);
 
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
@@ -882,7 +990,16 @@ export default function Dashboard() {
   const focusPoint = (point: SituationPoint) => {
     setMobileSidebarOpen(false);
     mapRef.current?.setView([point.lat, point.lon], 12);
-    requestForecast(point.lat, point.lon, point.name);
+    situationLayerRef.current?.eachLayer((layer: any) => {
+      const location = layer.getLatLng?.();
+      if (
+        location &&
+        Math.abs(location.lat - point.lat) < 0.000001 &&
+        Math.abs(location.lng - point.lon) < 0.000001
+      ) {
+        layer.openPopup();
+      }
+    });
   };
 
   const locateMe = () => {
@@ -1436,7 +1553,7 @@ export default function Dashboard() {
           {!panelOpen && (
             <button className="forecast-hint" onClick={() => requestForecast(40.4168, -3.7038, "Madrid")}>
               <span>↘</span>
-              <b>Pulsa cualquier punto del mapa</b>
+              <b>Pulsa el mapa o un área de incendio</b>
               <small>Previsión horaria de sol, viento y lluvia</small>
             </button>
           )}
@@ -1447,7 +1564,18 @@ export default function Dashboard() {
                 <div className="forecast-title-row">
                   <span className="eyebrow">
                     PREVISIÓN DEL PUNTO{" "}
-                    <i className="forecast-point-symbol forecast-point-symbol--title" aria-hidden="true"></i>
+                    <i className="forecast-point-symbol forecast-point-symbol--title" aria-hidden="true">
+                      <span
+                        className={
+                          currentWindDirection === null
+                            ? "forecast-wind-arrow is-pending"
+                            : "forecast-wind-arrow"
+                        }
+                        style={{ transform: "rotate(" + (currentWindDirection ?? 0) + "deg)" }}
+                      >
+                        ↑
+                      </span>
+                    </i>
                   </span>
                   {selectedPoint && (
                     <small>{selectedPoint.lat.toFixed(4)}, {selectedPoint.lon.toFixed(4)} · Open‑Meteo</small>

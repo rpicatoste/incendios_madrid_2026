@@ -63,8 +63,18 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
 - Copernicus EMSR898: área y frente de La Mierla.
 - EFFIS WMS: área recorrida y actividad VIIRS.
 - NASA GIBS: humo/aerosoles VIIRS.
-- MITECO: sensores de calidad del aire.
-- Open-Meteo: previsión puntual solicitada por el navegador.
+- MITECO: sensores de calidad del aire; caché y refresco cada quince minutos.
+  La hora de observación se muestra en horario peninsular, se avisa si supera
+  tres horas de antigüedad y, si la fuente falla, se conserva la última lectura
+  válida, persistida mediante escritura atómica en `data/cache/air-quality.json`.
+  Los refrescos simultáneos comparten un bloqueo corto. Producción carga la
+  autoridad intermedia pública de FNMT desde `ops/fnmt-components.pem`; la
+  validación TLS nunca se desactiva.
+- Open-Meteo: previsión puntual solicitada por el navegador; se renueva cada
+  quince minutos mientras el panel del punto permanece abierto.
+- El navegador renueva estado cada dos minutos y región, noticias, manifiesto
+  satelital y lista de snapshots cada cinco minutos; también refresca al volver
+  a primer plano o recuperar conexión.
 
 ## Flujo seguro de cambios
 

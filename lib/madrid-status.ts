@@ -86,9 +86,7 @@ const listAfter = (html: string, startPattern: RegExp) => {
   };
 };
 
-export const getMadridStatus = async (): Promise<MadridStatus> => {
-  if (memoryCache && memoryCache.expiresAt > Date.now()) return memoryCache.payload;
-
+const fetchMadridStatus = async (): Promise<MadridStatus> => {
   const fetchedAt = new Date().toISOString();
   try {
     const response = await fetch(MADRID_STATUS_SOURCE, {
@@ -159,4 +157,14 @@ export const getMadridStatus = async (): Promise<MadridStatus> => {
     memoryCache = { expiresAt: Date.now() + 30 * 1000, payload };
     return payload;
   }
+};
+
+let pendingRequest: Promise<MadridStatus> | undefined;
+
+export const getMadridStatus = async (): Promise<MadridStatus> => {
+  if (memoryCache && memoryCache.expiresAt > Date.now()) return memoryCache.payload;
+  pendingRequest ||= fetchMadridStatus().finally(() => {
+    pendingRequest = undefined;
+  });
+  return pendingRequest;
 };

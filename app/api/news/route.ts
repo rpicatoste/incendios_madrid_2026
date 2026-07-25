@@ -1,4 +1,4 @@
-import { getMadridStatus } from "../../../lib/madrid-status";
+import { getMadridStatus, type MadridStatus } from "../../../lib/madrid-status";
 
 const MADRID_URL =
   "https://www.comunidad.madrid/seguridad-emergencias-asem-112/incendio-forestal-sierra-oeste-ifsierraoeste-julio-2026";
@@ -270,7 +270,7 @@ export async function GET() {
 
   const incidents: OfficialIncident[] = [];
   if (madridStatusResult.status === "fulfilled") {
-    const status = madridStatusResult.value;
+    const status = madridStatusResult.value as MadridStatus;
     incidents.push({
       id: "sierra-oeste",
       name: "Sierra Oeste",

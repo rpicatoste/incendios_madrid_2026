@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
@@ -84,6 +85,7 @@ test("keeps upstream access fixed and the production listener private", async ()
     statusRoute,
     madridStatus,
     liveRegion,
+    fnmtCertificate,
   ] = await Promise.all([
     readFile(new URL("../app/api/air/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/snapshots/route.ts", import.meta.url), "utf8"),
@@ -98,10 +100,24 @@ test("keeps upstream access fixed and the production listener private", async ()
     readFile(new URL("../app/api/status/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/madrid-status.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/live-region.ts", import.meta.url), "utf8"),
+    readFile(new URL("../ops/fnmt-components.pem", import.meta.url), "utf8"),
   ]);
 
   assert.match(airRoute, /const ICA_URL = "https:\/\/ica\.miteco\.es\/datos\/ica-ultima-hora\.csv"/);
-  assert.doesNotMatch(airRoute, /child_process|execFile|spawn\(/);
+  assert.equal(["child_process", "execFile", "spawn("].some((term) => airRoute.includes(term)), false);
+  assert.equal(airRoute.includes('timeZone: "Europe/Madrid"'), true);
+  assert.equal(airRoute.includes("sourceOk: true"), true);
+  assert.equal(airRoute.includes("responseFromCache(cached, true)"), true);
+  assert.equal(airRoute.includes("AbortSignal.timeout(10000)"), true);
+  assert.equal(airRoute.includes("delayed: observedAt"), true);
+  assert.equal(airRoute.includes("process.env.FOCO_DATA_DIR"), true);
+  assert.equal(airRoute.includes("acquireRefreshLock"), true);
+  assert.equal(airRoute.includes("writeDiskCache"), true);
+  assert.doesNotMatch(airRoute, /rejectUnauthorized\s*:\s*false/);
+  assert.equal(
+    createHash("sha256").update(fnmtCertificate).digest("hex"),
+    "74a26ccb0f9ca1f7cdcbd2d4d4a58923c57165047d809b6b52cac50541a968ad",
+  );
   assert.match(snapshotRoute, /timingSafeEqual/);
   assert.match(snapshotRoute, /declaredLength > 128/);
   assert.match(snapshotRoute, /captureFromServer\(request, capturedAt\)/);
@@ -120,14 +136,29 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(copernicusMap, /DATA_HOST = "rapidmapping-viewer\.s3\.eu-west-1\.amazonaws\.com"/);
   assert.match(worker, /\["GET", "HEAD"\]/);
   assert.match(service, /--hostname 127\.0\.0\.1/);
+  assert.match(service, /NODE_EXTRA_CA_CERTS=.*\/ops\/fnmt-components\.pem/);
   assert.doesNotMatch(service, /--hostname 0\.0\.0\.0/);
   assert.match(dashboard, /L\.circleMarker\(\[station\.lat, station\.lon\]/);
   assert.doesNotMatch(dashboard, /L\.marker\(\[station\.lat, station\.lon\]/);
   assert.match(dashboard, /pane: "foco-user-location"/);
   assert.match(dashboard, /zIndexOffset: 2000/);
   assert.match(dashboard, /pane: "foco-forecast-point"/);
-  assert.match(dashboard, /class="forecast-point-symbol forecast-point-symbol--map"/);
-  assert.match(dashboard, /className="forecast-point-symbol forecast-point-symbol--title"/);
+  assert.equal(dashboard.includes("forecast-point-symbol--map"), true);
+  assert.equal(dashboard.includes('className="forecast-point-symbol forecast-point-symbol--title"'), true);
+  assert.equal(dashboard.includes("currentWindDirection === null"), true);
+  assert.equal(dashboard.includes("currentWindDirection ?? 0"), true);
+  assert.equal(dashboard.includes("REFRESH_INTERVALS.forecast"), true);
+  assert.equal(dashboard.includes('current: "wind_direction_10m"'), true);
+  assert.equal(dashboard.includes('forecast_hours: "12"'), true);
+  assert.equal(dashboard.includes("if (!document.hidden) void refresh()"), true);
+  const forecastAbort = dashboard.indexOf("forecastRequestRef.current?.abort();");
+  const forecastCacheRead = dashboard.indexOf("const cachedForecast = forecastCacheRef.current.get(cacheKey);");
+  assert.equal(forecastAbort >= 0 && forecastAbort < forecastCacheRead, true);
+  assert.match(dashboard, /pointToLayer:[\s\S]*?bubblingMouseEvents: false/);
+  assert.equal(dashboard.includes("scheduleRefresh(refreshAir, REFRESH_INTERVALS.air)"), true);
+  assert.equal(dashboard.includes("bubblingMouseEvents: false"), true);
+  assert.equal(dashboard.includes("requestForecast(point.lat, point.lon, point.name)"), false);
+  assert.equal(dashboard.includes("requestForecast(station.lat, station.lon, station.name)"), false);
   assert.match(dashboard, /className="forecast-day-card"/);
   assert.match(dashboard, /startsDay/);
   assert.match(dashboard, /className="wind-arrow"/);
@@ -153,6 +184,7 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.doesNotMatch(newsRoute, /request\.url|searchParams/);
   assert.match(statusRoute, /getMadridStatus/);
   assert.match(madridStatus, /authoritative/);
+  assert.match(madridStatus, /pendingRequest \|\|= fetchMadridStatus/);
   assert.match(madridStatus, /Municipios evacuados/);
   assert.match(liveRegion, /status\.authoritative\.evacuated/);
   assert.match(liveRegion, /nominatim\.openstreetmap\.org\/search/);
