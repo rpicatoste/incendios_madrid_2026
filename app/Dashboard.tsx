@@ -92,6 +92,18 @@ type SourceRead = {
   ok: boolean;
 };
 
+type OfficialIncident = {
+  id: string;
+  name: string;
+  province: string;
+  status: string;
+  detail: string;
+  updatedAt: string;
+  updatedLabel?: string;
+  url: string;
+  source: string;
+};
+
 const OFFICIAL_URL =
   "https://www.comunidad.madrid/seguridad-emergencias-asem-112/incendio-forestal-sierra-oeste-ifsierraoeste-julio-2026";
 const DSN_URL = "https://www.dsn.gob.es/gl/node/32742";
@@ -100,6 +112,10 @@ const CLM_URL =
 const CEMS_LA_MIERLA_URL =
   "https://mapping.emergency.copernicus.eu/activations/EMSR898/";
 const MITECO_ICA_URL = "https://ica.miteco.es/datos/ica-ultima-hora.csv";
+const JCYL_FIRE_URL =
+  "https://analisis.datosabiertos.jcyl.es/explore/dataset/incendios-forestales/";
+const FIDIAS_URL =
+  "https://fidias.castillalamancha.es/consulta/forms/fidif001.php?auth=ANONIMO";
 
 const fallbackStatus: LiveStatus = {
   lastUpdated: "24 de julio · 23:30 h",
@@ -225,6 +241,7 @@ export default function Dashboard() {
   const [activeList, setActiveList] = useState<StatusKind>("evacuado");
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("news");
   const [officialNews, setOfficialNews] = useState<OfficialNews[]>([]);
+  const [officialIncidents, setOfficialIncidents] = useState<OfficialIncident[]>([]);
   const [sourceReads, setSourceReads] = useState<Record<string, SourceRead>>({});
   const [newsReadAt, setNewsReadAt] = useState("");
   const [airSourceReadAt, setAirSourceReadAt] = useState("");
@@ -401,10 +418,12 @@ export default function Dashboard() {
       if (newsResult.status === "fulfilled") {
         const newsPayload = newsResult.value as {
           items?: OfficialNews[];
+          incidents?: OfficialIncident[];
           readAt?: string;
           sourceReads?: Record<string, SourceRead>;
         };
         setOfficialNews(newsPayload.items || []);
+        setOfficialIncidents(newsPayload.incidents || []);
         setSourceReads(newsPayload.sourceReads || {});
         setNewsReadAt(newsPayload.readAt || "");
       }
@@ -914,6 +933,36 @@ export default function Dashboard() {
       ok: sourceReads.x112?.ok,
     },
     {
+      id: "infocam",
+      icon: "IF",
+      className: "source-icon--clm",
+      title: "@Plan_INFOCAM",
+      detail: "Operativo oficial de incendios de Castilla-La Mancha",
+      url: "https://x.com/Plan_INFOCAM",
+      read: sourceReads.infocam?.readAt || newsReadAt,
+      ok: sourceReads.infocam?.ok,
+    },
+    {
+      id: "x112cyl",
+      icon: "112",
+      className: "source-icon--jcyl",
+      title: "@112cyl",
+      detail: "Emergencias oficiales de Castilla y León",
+      url: "https://x.com/112cyl",
+      read: sourceReads.x112cyl?.readAt || newsReadAt,
+      ok: sourceReads.x112cyl?.ok,
+    },
+    {
+      id: "ume",
+      icon: "UME",
+      className: "source-icon--ume",
+      title: "@UMEgob",
+      detail: "Unidad Militar de Emergencias",
+      url: "https://x.com/UMEgob",
+      read: sourceReads.ume?.readAt || newsReadAt,
+      ok: sourceReads.ume?.ok,
+    },
+    {
       id: "madrid",
       icon: "CM",
       className: "source-icon--cm",
@@ -942,6 +991,26 @@ export default function Dashboard() {
       url: CLM_URL,
       read: sourceReads.clm?.readAt || regionReadAt,
       ok: sourceReads.clm?.ok,
+    },
+    {
+      id: "fidias",
+      icon: "CLM",
+      className: "source-icon--clm",
+      title: "FIDIAS · Castilla-La Mancha",
+      detail: "Ficha operativa pública de La Mierla",
+      url: FIDIAS_URL,
+      read: sourceReads.fidias?.readAt,
+      ok: sourceReads.fidias?.ok,
+    },
+    {
+      id: "jcyl",
+      icon: "CyL",
+      className: "source-icon--jcyl",
+      title: "Datos Abiertos · Castilla y León",
+      detail: "Parte oficial estructurado de Burgohondo",
+      url: JCYL_FIRE_URL,
+      read: sourceReads.jcyl?.readAt,
+      ok: sourceReads.jcyl?.ok,
     },
     {
       id: "cems",
@@ -1083,7 +1152,7 @@ export default function Dashboard() {
             </div>
             <nav className="sidebar-tabs" aria-label="Secciones del panel">
               {([
-                ["news", "Noticias"],
+                ["news", "Actualidad"],
                 ["evacuations", "Evacuaciones"],
                 ["sources", "Fuentes"],
               ] as [SidebarTab, string][]).map(([tab, label]) => (
@@ -1100,10 +1169,44 @@ export default function Dashboard() {
             </nav>
 
             {sidebarTab === "news" && (
-              <section className="sidebar-tab-panel news-panel" aria-label="Últimas noticias oficiales">
+              <section className="sidebar-tab-panel news-panel" aria-label="Actualidad oficial de los incendios">
                 <div className="eyebrow-row">
-                  <span className="eyebrow">{isLive ? "ÚLTIMA HORA OFICIAL" : "PARTE DEL SNAPSHOT"}</span>
+                  <span className="eyebrow">{isLive ? "ESTADO Y ÚLTIMA HORA" : "PARTE DEL SNAPSHOT"}</span>
                   <span className="refresh-time">{formatReadTime(newsReadAt)}</span>
+                </div>
+
+                <div className="incident-list" aria-label="Estado oficial de los incendios seguidos">
+                  {officialIncidents.map((incident) => {
+                    const normalizedStatus = incident.status.toLowerCase();
+                    const tone = normalizedStatus.includes("extinguido")
+                      ? "out"
+                      : normalizedStatus.includes("controlado")
+                        ? "controlled"
+                        : normalizedStatus.includes("estabilizado")
+                          ? "stable"
+                          : "active";
+                    return (
+                      <a key={incident.id} className="incident-row" href={incident.url} target="_blank" rel="noreferrer">
+                        <span className={`incident-status incident-status--${tone}`}>{incident.status}</span>
+                        <span>
+                          <b>{incident.name}</b>
+                          <small>{incident.province} · {incident.detail}</small>
+                          <time dateTime={incident.updatedAt}>
+                            {incident.updatedLabel
+                              ? incident.updatedLabel === "FIDIAS leído"
+                                ? `${incident.updatedLabel} ${formatSnapshotTime(incident.updatedAt)}`
+                                : incident.updatedLabel
+                              : formatSnapshotTime(incident.updatedAt)}
+                            {" · "}{incident.source}
+                          </time>
+                        </span>
+                        <i>↗</i>
+                      </a>
+                    );
+                  })}
+                  {!officialIncidents.length && (
+                    <p className="incident-empty">Esperando las fichas operativas oficiales.</p>
+                  )}
                 </div>
 
                 <a className="official-brief" href={OFFICIAL_URL} target="_blank" rel="noreferrer">
@@ -1125,9 +1228,9 @@ export default function Dashboard() {
                   ))}
                   {!officialNews.length && (
                     <a className="news-card news-card--empty" href="https://x.com/112cmadrid" target="_blank" rel="noreferrer">
-                      <span><b>@112cmadrid</b><time>{formatReadTime(newsReadAt)}</time></span>
-                      <p>No se han podido extraer avisos relevantes del timeline público. Puedes abrir el canal oficial directamente.</p>
-                      <small>Abrir X ↗</small>
+                      <span><b>Canales oficiales</b><time>{formatReadTime(newsReadAt)}</time></span>
+                      <p>No se han podido extraer avisos relevantes de los timelines públicos. Puedes abrir Madrid 112 directamente.</p>
+                      <small>Abrir @112cmadrid ↗</small>
                     </a>
                   )}
                   <a className="news-card news-card--satellite" href={CEMS_LA_MIERLA_URL} target="_blank" rel="noreferrer">

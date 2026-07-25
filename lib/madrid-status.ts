@@ -7,6 +7,7 @@ export type MadridStatus = {
   confined: string[];
   shelters: string[];
   roads: string[];
+  incidentStatus: string;
   fetchedAt: string;
   sourceOk: boolean;
   authoritative: {
@@ -48,6 +49,7 @@ const fallback = {
     "Navalcarnero",
   ],
   roads: ["M-507", "M540", "M501", "M-541", "M510", "M-512", "M-531", "M-539", "M-533", "M-521"],
+  incidentStatus: "Situación Operativa 3",
 };
 
 let memoryCache:
@@ -96,6 +98,7 @@ export const getMadridStatus = async (): Promise<MadridStatus> => {
     } as RequestInit & { cf: { cacheTtl: number; cacheEverything: boolean } });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const html = await response.text();
+    const plainText = decode(html);
     const updatedMatch = html.match(/<strong>\s*Última actualización:\s*([^<]+)<\/strong>/i);
     const evacuatedSection = listAfter(
       html,
@@ -115,6 +118,8 @@ export const getMadridStatus = async (): Promise<MadridStatus> => {
       .map((item) => item.replace(/\.$/, ""));
     const shelters = sheltersSection.items;
     const roads = roadsSection.items.map((row) => row.split(":")[0].trim());
+    const operationalMatch = plainText.match(/Situación Operativa\s*([0-3])/i);
+    const explicitState = plainText.match(/\b(extinguido|controlado|estabilizado)\b/i);
     const payload: MadridStatus = {
       lastUpdated: updatedMatch
         ? decode(updatedMatch[1]).replace(" a las ", " · ")
@@ -123,6 +128,11 @@ export const getMadridStatus = async (): Promise<MadridStatus> => {
       confined: confinedSection.found ? confined : fallback.confined,
       shelters: sheltersSection.found ? shelters : fallback.shelters,
       roads: roadsSection.found ? roads : fallback.roads,
+      incidentStatus: operationalMatch
+        ? `Situación Operativa ${operationalMatch[1]}`
+        : explicitState
+          ? explicitState[1][0].toUpperCase() + explicitState[1].slice(1).toLowerCase()
+          : fallback.incidentStatus,
       fetchedAt,
       sourceOk: true,
       authoritative: {

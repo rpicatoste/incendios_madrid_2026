@@ -39,7 +39,7 @@ test("server-renders FOCO Centro with the public security policy", async () => {
   assert.match(html, /<b>FOCO<\/b><small>CENTRO<\/small>/);
   assert.match(html, /Seguimiento activo/);
   assert.match(html, /Humo VIIRS/);
-  assert.match(html, /Noticias/);
+  assert.match(html, /Actualidad/);
   assert.match(html, /Evacuaciones/);
   assert.match(html, /Fuentes/);
   assert.match(html, /Abrir panel de situación/);
@@ -136,9 +136,14 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(dashboard, /Frente observado/);
   assert.match(dashboard, /Centroides representativos; no perímetros oficiales/);
   assert.match(dashboard, /MITECO · calidad del aire/);
-  assert.match(dashboard, /\["news", "Noticias"\]/);
+  assert.match(dashboard, /\["news", "Actualidad"\]/);
   assert.doesNotMatch(dashboard, /describeSun/);
-  assert.match(newsRoute, /const X_PROFILE_URL = "https:\/\/x\.com\/112cmadrid"/);
+  assert.match(newsRoute, /username: "112cmadrid"/);
+  assert.match(newsRoute, /username: "Plan_INFOCAM"/);
+  assert.match(newsRoute, /username: "112cyl"/);
+  assert.match(newsRoute, /username: "UMEgob"/);
+  assert.match(newsRoute, /analisis\.datosabiertos\.jcyl\.es/);
+  assert.match(newsRoute, /fidias\.castillalamancha\.es/);
   assert.match(newsRoute, /Promise\.allSettled/);
   assert.doesNotMatch(newsRoute, /request\.url|searchParams/);
   assert.match(statusRoute, /getMadridStatus/);
