@@ -117,32 +117,42 @@ export async function POST(request: Request) {
 
     const capturedAt = new Date().toISOString();
     const hourId = capturedAt.slice(0, 13);
-    const payload = await captureFromServer(request, capturedAt);
 
-    const snapshot = await withWriteLock(async () => {
+    const result = await withWriteLock(async () => {
+      const payload = await captureFromServer(request, capturedAt);
       const snapshots = await readSnapshots();
       const existingSnapshot = snapshots.find((item) => item.id === hourId);
-      if (existingSnapshot?.data.satellite) return existingSnapshot;
+      if (existingSnapshot?.data.satellite) {
+        return {
+          action: "reused",
+          snapshot: existingSnapshot,
+          liveCapturedAt: payload.satellite?.capturedAt,
+        };
+      }
       payload.satellite = await freezeSatelliteSnapshot(
         "live",
         hourId,
         payload.satellite!,
       );
+      const existingIndex = snapshots.findIndex((item) => item.id === hourId);
       const newSnapshot: StoredSnapshot = {
         id: hourId,
         capturedAt,
         data: payload,
       };
-      const existingIndex = snapshots.findIndex((item) => item.id === hourId);
       const nextSnapshots =
         existingIndex >= 0
           ? snapshots.map((item, index) => (index === existingIndex ? newSnapshot : item))
           : [...snapshots, newSnapshot];
       await saveSnapshots(nextSnapshots.slice(-336));
-      return newSnapshot;
+      return {
+        action: existingIndex >= 0 ? "repaired" : "created",
+        snapshot: newSnapshot,
+        liveCapturedAt: payload.satellite.capturedAt,
+      };
     });
 
-    return Response.json({ snapshot });
+    return Response.json(result);
   } catch (error) {
     return Response.json(
       { error: error instanceof Error ? error.message : "No se pudo guardar el snapshot." },

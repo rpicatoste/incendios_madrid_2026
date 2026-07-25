@@ -47,10 +47,13 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
   además de publicaciones filtradas de fuentes oficiales.
 - La Mierla usa el perímetro vectorial oficial Copernicus EMSR898.
 - El área EFFIS se cachea como PNG 4096×2731. Hotspots y humo se cachean a
-  1600×1067. Un fallo de una fuente conserva la última copia válida y lo marca
-  como `stale` en el manifiesto.
+  1600×1067 desde NASA GIBS. Las capturas rechazan PNG transparentes, buscan
+  hasta dos fechas anteriores para los productos diarios y guardan la fecha
+  real del producto en el manifiesto v3. Un fallo conserva únicamente una
+  copia anterior con píxeles visibles y la marca como `stale`.
 - Cada snapshot congela por valor el estado, los puntos regionales, los
   sensores de aire, los rásteres satelitales y el GeoJSON de Copernicus.
+  Un snapshot histórico sin copia congelada no consulta capas remotas después.
 
 ## Fuentes y actualización
 
@@ -61,8 +64,9 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
 - FIDIAS Castilla-La Mancha: ficha de La Mierla.
 - Datos Abiertos JCyL: parte estructurado de Burgohondo.
 - Copernicus EMSR898: área y frente de La Mierla.
-- EFFIS WMS: área recorrida y actividad VIIRS.
-- NASA GIBS: humo/aerosoles VIIRS.
+- EFFIS WMS: área recorrida.
+- NASA GIBS: detecciones térmicas VIIRS de NOAA-20 y Suomi NPP, más
+  humo/aerosoles VIIRS.
 - MITECO: sensores de calidad del aire; caché y refresco cada quince minutos.
   La hora de observación se muestra en horario peninsular, se avisa si supera
   tres horas de antigüedad y, si la fuente falla, se conserva la última lectura

@@ -1,5 +1,6 @@
 import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { inflateSync } from "node:zlib";
 
 export const SATELLITE_BOUNDS: [[number, number], [number, number]] = [
   [39.35, -5.9],
@@ -8,6 +9,16 @@ export const SATELLITE_BOUNDS: [[number, number], [number, number]] = [
 export const SATELLITE_LAYERS = ["burnt", "heat", "smoke", "copernicus"] as const;
 export type SatelliteLayer = (typeof SATELLITE_LAYERS)[number];
 type RasterLayer = Exclude<SatelliteLayer, "copernicus">;
+
+type CopernicusMap = {
+  source?: {
+    areaProduct?: string;
+    areaObservedAt?: string;
+    frontProduct?: string;
+    frontObservedAt?: string;
+    readAt?: string;
+  };
+};
 
 const RASTER_DIMENSIONS: Record<RasterLayer, { width: number; height: number }> = {
   // El área quemada necesita conservar el contorno al ampliar. 4096 px equivale
@@ -20,11 +31,12 @@ const RASTER_DIMENSIONS: Record<RasterLayer, { width: number; height: number }> 
 };
 
 export type SatelliteSnapshot = {
-  schemaVersion?: 2;
+  schemaVersion?: 2 | 3;
   capturedAt: string;
   bounds: typeof SATELLITE_BOUNDS;
   layers: Partial<Record<SatelliteLayer, true>>;
   layerCapturedAt: Partial<Record<SatelliteLayer, string>>;
+  layerSourceDate?: Partial<Record<RasterLayer, string>>;
   rasterDimensions?: Partial<
     Record<RasterLayer, { width: number; height: number }>
   >;
@@ -48,8 +60,14 @@ const layerPath = (hourId: string, layer: SatelliteLayer) =>
 const manifestPath = (storageId: string) =>
   join(satelliteDirectory, storageId, "manifest.json");
 
+const LOOKBACK_DAYS: Record<RasterLayer, number> = {
+  burnt: 0,
+  heat: 2,
+  smoke: 2,
+};
+
 const sourceUrl = (layer: RasterLayer, date: string) => {
-  const isEffis = layer !== "smoke";
+  const isEffis = layer === "burnt";
   const dimensions = RASTER_DIMENSIONS[layer];
   const url = new URL(
     isEffis
@@ -64,9 +82,12 @@ const sourceUrl = (layer: RasterLayer, date: string) => {
       layer === "burnt"
         ? "effis.nrt.ba.poly"
         : layer === "heat"
-          ? "viirs.hs"
+          ? [
+              "VIIRS_NOAA20_Thermal_Anomalies_375m_All",
+              "VIIRS_SNPP_Thermal_Anomalies_375m_All",
+            ].join(",")
           : "VIIRS_SNPP_Aerosol_Type_Deep_Blue_Best_Estimate",
-    STYLES: "",
+    STYLES: layer === "heat" ? "size10,size10" : "",
     FORMAT: "image/png",
     TRANSPARENT: "true",
     SRS: "EPSG:4326",
@@ -95,37 +116,140 @@ const readPngDimensions = (bytes: Uint8Array) => {
   };
 };
 
+const paethPredictor = (left: number, above: number, upperLeft: number) => {
+  const estimate = left + above - upperLeft;
+  const leftDistance = Math.abs(estimate - left);
+  const aboveDistance = Math.abs(estimate - above);
+  const upperLeftDistance = Math.abs(estimate - upperLeft);
+  if (leftDistance <= aboveDistance && leftDistance <= upperLeftDistance) return left;
+  return aboveDistance <= upperLeftDistance ? above : upperLeft;
+};
+
+export const pngHasVisiblePixels = (bytes: Uint8Array) => {
+  const dimensions = readPngDimensions(bytes);
+  if (!dimensions || bytes.length < 29) return false;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const bitDepth = bytes[24];
+  const colorType = bytes[25];
+  const interlaced = bytes[28] !== 0;
+  if (bitDepth !== 8 || colorType !== 6 || interlaced) return true;
+
+  const idatChunks: Buffer[] = [];
+  let offset = 8;
+  while (offset + 12 <= bytes.length) {
+    const length = view.getUint32(offset);
+    const type = String.fromCharCode(
+      bytes[offset + 4],
+      bytes[offset + 5],
+      bytes[offset + 6],
+      bytes[offset + 7],
+    );
+    const dataStart = offset + 8;
+    const nextOffset = dataStart + length + 4;
+    if (nextOffset > bytes.length) return false;
+    if (type === "IDAT") idatChunks.push(Buffer.from(bytes.subarray(dataStart, dataStart + length)));
+    offset = nextOffset;
+    if (type === "IEND") break;
+  }
+  if (!idatChunks.length) return false;
+
+  const bytesPerPixel = 4;
+  const stride = dimensions.width * bytesPerPixel;
+  const expectedLength = (stride + 1) * dimensions.height;
+  try {
+    const inflated = inflateSync(Buffer.concat(idatChunks), {
+      maxOutputLength: expectedLength,
+    });
+    if (inflated.length !== expectedLength) return false;
+    let previousRow = new Uint8Array(stride);
+    let currentRow = new Uint8Array(stride);
+    let cursor = 0;
+
+    for (let row = 0; row < dimensions.height; row += 1) {
+      const filter = inflated[cursor];
+      cursor += 1;
+      for (let column = 0; column < stride; column += 1) {
+        const raw = inflated[cursor];
+        cursor += 1;
+        const left = column >= bytesPerPixel ? currentRow[column - bytesPerPixel] : 0;
+        const above = previousRow[column];
+        const upperLeft = column >= bytesPerPixel ? previousRow[column - bytesPerPixel] : 0;
+        const predictor =
+          filter === 0
+            ? 0
+            : filter === 1
+              ? left
+              : filter === 2
+                ? above
+                : filter === 3
+                  ? Math.floor((left + above) / 2)
+                  : filter === 4
+                    ? paethPredictor(left, above, upperLeft)
+                    : Number.NaN;
+        if (!Number.isFinite(predictor)) return false;
+        currentRow[column] = (raw + predictor) & 0xff;
+      }
+      for (let alpha = 3; alpha < stride; alpha += bytesPerPixel) {
+        if (currentRow[alpha] !== 0) return true;
+      }
+      [previousRow, currentRow] = [currentRow, previousRow];
+    }
+    return false;
+  } catch {
+    return false;
+  }
+};
+
+const sourceDates = (date: string, lookbackDays: number) => {
+  const start = new Date(`${date}T00:00:00Z`);
+  return Array.from({ length: lookbackDays + 1 }, (_, daysAgo) => {
+    const candidate = new Date(start);
+    candidate.setUTCDate(candidate.getUTCDate() - daysAgo);
+    return candidate.toISOString().slice(0, 10);
+  });
+};
+
 const capturePng = async (
   hourId: string,
   layer: RasterLayer,
   date: string,
 ) => {
-  const response = await fetch(sourceUrl(layer, date), {
-    signal: AbortSignal.timeout(45000),
-    headers: {
-      "User-Agent": "FOCO-Centro/2.0",
-      Accept: "image/png",
-    },
-  });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (
-    bytes.length < 8 ||
-    bytes[0] !== 0x89 ||
-    bytes[1] !== 0x50 ||
-    bytes[2] !== 0x4e ||
-    bytes[3] !== 0x47
-  ) {
-    throw new Error("La fuente no devolvió PNG");
+  let lastError = "Sin captura";
+  for (const sourceDate of sourceDates(date, LOOKBACK_DAYS[layer])) {
+    try {
+      const response = await fetch(sourceUrl(layer, sourceDate), {
+        signal: AbortSignal.timeout(45000),
+        headers: {
+          "User-Agent": "FOCO-Centro/2.0",
+          Accept: "image/png",
+        },
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (
+        bytes.length < 8 ||
+        bytes[0] !== 0x89 ||
+        bytes[1] !== 0x50 ||
+        bytes[2] !== 0x4e ||
+        bytes[3] !== 0x47
+      ) {
+        throw new Error("La fuente no devolvió PNG");
+      }
+      if (bytes.length > 24 * 1024 * 1024) throw new Error("Imagen demasiado grande");
+      if (!pngHasVisiblePixels(bytes)) throw new Error("Imagen transparente sin datos");
+      await atomicWrite(layerPath(hourId, layer), bytes);
+      return { sourceDate };
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "Sin captura";
+    }
   }
-  if (bytes.length > 24 * 1024 * 1024) throw new Error("Imagen demasiado grande");
-  await atomicWrite(layerPath(hourId, layer), bytes);
+  throw new Error(lastError);
 };
 
 export const captureSatelliteSnapshot = async (
   storageId: string,
   capturedAt: string,
-  copernicusMap: any,
+  copernicusMap: CopernicusMap,
 ): Promise<SatelliteSnapshot> => {
   const date = capturedAt.slice(0, 10);
   let previous: SatelliteSnapshot | undefined;
@@ -144,6 +268,7 @@ export const captureSatelliteSnapshot = async (
   ]);
   const layers: SatelliteSnapshot["layers"] = {};
   const layerCapturedAt: SatelliteSnapshot["layerCapturedAt"] = {};
+  const layerSourceDate: NonNullable<SatelliteSnapshot["layerSourceDate"]> = {};
   const rasterDimensions: NonNullable<SatelliteSnapshot["rasterDimensions"]> = {};
   const staleLayers: NonNullable<SatelliteSnapshot["staleLayers"]> = {};
   const errors: NonNullable<SatelliteSnapshot["errors"]> = {};
@@ -152,18 +277,26 @@ export const captureSatelliteSnapshot = async (
     if (result.status === "fulfilled") {
       layers[layer] = true;
       layerCapturedAt[layer] = capturedAt;
-      if (layer !== "copernicus") rasterDimensions[layer] = RASTER_DIMENSIONS[layer];
+      if (layer !== "copernicus") {
+        const sourceDate = (result.value as { sourceDate: string }).sourceDate;
+        layerSourceDate[layer] = sourceDate;
+        rasterDimensions[layer] = RASTER_DIMENSIONS[layer];
+        if (sourceDate !== date) staleLayers[layer] = true;
+      }
       return;
     }
     errors[layer] = result.reason instanceof Error ? result.reason.message : "Sin captura";
     if (!previous?.layers[layer]) return;
     try {
       const existingBytes = await readFile(layerPath(storageId, layer));
+      if (layer !== "copernicus" && !pngHasVisiblePixels(existingBytes)) return;
       layers[layer] = true;
       staleLayers[layer] = true;
       layerCapturedAt[layer] =
         previous.layerCapturedAt?.[layer] || previous.capturedAt;
       if (layer !== "copernicus") {
+        layerSourceDate[layer] =
+          previous.layerSourceDate?.[layer] || previous.capturedAt.slice(0, 10);
         rasterDimensions[layer] =
           readPngDimensions(existingBytes) ||
           previous.rasterDimensions?.[layer] ||
@@ -174,11 +307,12 @@ export const captureSatelliteSnapshot = async (
     }
   }));
   const snapshot: SatelliteSnapshot = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     capturedAt,
     bounds: SATELLITE_BOUNDS,
     layers,
     layerCapturedAt,
+    layerSourceDate,
     rasterDimensions,
     ...(Object.keys(staleLayers).length ? { staleLayers } : {}),
     ...(Object.keys(errors).length ? { errors } : {}),

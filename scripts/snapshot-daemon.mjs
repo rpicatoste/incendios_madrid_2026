@@ -1,8 +1,12 @@
 const origin = process.env.FOCO_ORIGIN || "http://localhost:3000";
 const token = process.env.FOCO_SNAPSHOT_TOKEN || "";
 const intervalMs = 5 * 60 * 1000;
+const startupRetryMs = 15 * 1000;
+let capturing = false;
 
 async function capture() {
+  if (capturing) return true;
+  capturing = true;
   try {
     const response = await fetch(`${origin}/api/snapshots`, {
       method: "POST",
@@ -14,13 +18,31 @@ async function capture() {
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const result = await response.json();
+    const action =
+      result.action === "created"
+        ? "creado"
+        : result.action === "repaired"
+          ? "reparado"
+          : "existente";
     process.stdout.write(
-      `[snapshots] ${result.snapshot?.capturedAt || "captura comprobada"}\n`,
+      `[snapshots] ${action} ${result.snapshot?.capturedAt || "captura comprobada"}` +
+        ` · live ${result.liveCapturedAt || "sin actualizar"}\n`,
     );
+    return true;
   } catch (error) {
     process.stderr.write(`[snapshots] esperando al servidor: ${error.message}\n`);
+    return false;
+  } finally {
+    capturing = false;
   }
 }
 
-await capture();
-setInterval(capture, intervalMs);
+const initialCaptureOk = await capture();
+if (!initialCaptureOk) {
+  setTimeout(() => {
+    void capture();
+  }, startupRetryMs);
+}
+setInterval(() => {
+  void capture();
+}, intervalMs);

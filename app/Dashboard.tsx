@@ -63,11 +63,12 @@ type SnapshotData = {
   region: RegionData;
   layerTime: string;
   satellite?: {
-    schemaVersion?: 2;
+    schemaVersion?: 2 | 3;
     capturedAt: string;
     bounds: [[number, number], [number, number]];
     layers: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus", true>>;
     layerCapturedAt?: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus", string>>;
+    layerSourceDate?: Partial<Record<"burnt" | "heat" | "smoke", string>>;
     rasterDimensions?: Partial<
       Record<"burnt" | "heat" | "smoke", { width: number; height: number }>
     >;
@@ -206,6 +207,14 @@ const formatSnapshotTime = (value: string) =>
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+
+const formatSourceDate = (value: string) =>
+  new Intl.DateTimeFormat("es-ES", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${value}T12:00:00Z`));
 
 const formatReadTime = (value?: string) => {
   if (!value || Number.isNaN(new Date(value).getTime())) return "Sin lectura todavía";
@@ -599,8 +608,12 @@ export default function Dashboard() {
         airLayerRef.current = L.layerGroup().addTo(map);
 
         heatLayerRef.current = L.tileLayer
-          .wms("https://maps.effis.emergency.copernicus.eu/effis", {
-            layers: "viirs.hs",
+          .wms("https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi", {
+            layers: [
+              "VIIRS_NOAA20_Thermal_Anomalies_375m_All",
+              "VIIRS_SNPP_Thermal_Anomalies_375m_All",
+            ].join(","),
+            styles: "size10,size10",
             format: "image/png",
             transparent: true,
             version: "1.1.1",
@@ -609,7 +622,7 @@ export default function Dashboard() {
             updateWhenIdle: true,
             updateWhenZooming: false,
             keepBuffer: 1,
-            attribution: "Copernicus EFFIS / NASA VIIRS",
+            attribution: "NASA GIBS / VIIRS",
           });
 
         burntLayerRef.current = L.tileLayer
@@ -966,9 +979,9 @@ export default function Dashboard() {
     };
     const hasFrozenSatellite = Boolean(displaySatellite);
     toggleLayer(airLayerRef.current, airVisible);
-    toggleLayer(heatLayerRef.current, heatVisible && !hasFrozenSatellite && !isLive);
-    toggleLayer(burntLayerRef.current, burntVisible && !hasFrozenSatellite && !isLive);
-    toggleLayer(smokeLayerRef.current, smokeVisible && !hasFrozenSatellite && !isLive);
+    toggleLayer(heatLayerRef.current, heatVisible && !hasFrozenSatellite && isLive);
+    toggleLayer(burntLayerRef.current, burntVisible && !hasFrozenSatellite && isLive);
+    toggleLayer(smokeLayerRef.current, smokeVisible && !hasFrozenSatellite && isLive);
     toggleLayer(historicalHeatLayerRef.current, heatVisible && hasFrozenSatellite);
     toggleLayer(historicalBurntLayerRef.current, burntVisible && hasFrozenSatellite);
     toggleLayer(historicalSmokeLayerRef.current, smokeVisible && hasFrozenSatellite);
@@ -1167,12 +1180,15 @@ export default function Dashboard() {
       ok: Boolean(displaySatellite?.layers.burnt),
     },
     {
-      id: "effis-heat",
-      icon: "EU",
-      className: "source-icon--eu",
-      title: "EFFIS / NASA VIIRS · calor",
-      detail: "Actividad térmica; no equivale a un frente exacto",
-      url: "https://forest-fire.emergency.copernicus.eu/apps/effis_current_situation/",
+      id: "nasa-heat",
+      icon: "NASA",
+      className: "source-icon--nasa",
+      title: "NASA GIBS · calor VIIRS",
+      detail: displaySatellite?.layerSourceDate?.heat
+        ? `Actividad térmica del ${formatSourceDate(displaySatellite.layerSourceDate.heat)}` +
+          (displaySatellite.staleLayers?.heat ? " · última copia válida" : "")
+        : "Actividad térmica; no equivale a un frente exacto",
+      url: "https://gibs.earthdata.nasa.gov/",
       read: displaySatellite?.layerCapturedAt?.heat,
       ok: Boolean(displaySatellite?.layers.heat),
     },
@@ -1181,7 +1197,10 @@ export default function Dashboard() {
       icon: "NASA",
       className: "source-icon--nasa",
       title: "NASA GIBS · aerosoles",
-      detail: "Capa VIIRS usada como indicio visual de humo",
+      detail: displaySatellite?.layerSourceDate?.smoke
+        ? `Indicio visual de humo del ${formatSourceDate(displaySatellite.layerSourceDate.smoke)}` +
+          (displaySatellite.staleLayers?.smoke ? " · última copia válida" : "")
+        : "Capa VIIRS usada como indicio visual de humo",
       url: "https://gibs.earthdata.nasa.gov/",
       read: displaySatellite?.layerCapturedAt?.smoke,
       ok: Boolean(displaySatellite?.layers.smoke),
