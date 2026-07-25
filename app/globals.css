@@ -1260,6 +1260,33 @@ button {
   text-align: center;
 }
 
+.weather-metric .sky-symbol {
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+  font-size: 17px;
+  line-height: 1;
+  overflow: visible;
+}
+
+.weather-metric.wind strong {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.wind-arrow {
+  display: inline-block;
+  color: #2794c7;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+  transform-origin: 50% 50%;
+}
+
+.now .wind-arrow {
+  color: #69c9f5;
+}
+
 .weather-metric em {
   font-style: normal;
   color: #869293;

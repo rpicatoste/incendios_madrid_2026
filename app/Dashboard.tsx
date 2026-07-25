@@ -32,6 +32,8 @@ type ForecastHour = {
   time: string;
   cloud: number;
   sunMinutes: number;
+  weatherCode: number;
+  isDay: boolean;
   rainProbability: number;
   rain: number;
   wind: number;
@@ -107,11 +109,25 @@ const compass = (degrees: number) => {
   return directions[Math.round(degrees / 45) % 8];
 };
 
-const describeSun = (hour: ForecastHour) => {
-  if (hour.sunMinutes >= 45) return "Despejado";
-  if (hour.sunMinutes >= 15) return "Con claros";
-  if (hour.cloud >= 70) return "Cubierto";
-  return "Sin sol";
+const skySymbol = (hour: ForecastHour) => {
+  if (!hour.isDay && hour.weatherCode <= 2) return { symbol: "☾", label: "Noche despejada" };
+  if (hour.weatherCode === 0) return { symbol: "☀︎", label: "Despejado" };
+  if (hour.weatherCode === 1) return { symbol: "🌤", label: "Principalmente despejado" };
+  if (hour.weatherCode === 2) return { symbol: "⛅", label: "Con claros" };
+  if (hour.weatherCode === 3) return { symbol: "☁︎", label: "Cubierto" };
+  if ([45, 48].includes(hour.weatherCode)) return { symbol: "🌫", label: "Niebla" };
+  if ([51, 53, 55, 56, 57].includes(hour.weatherCode)) return { symbol: "🌦", label: "Llovizna" };
+  if ([61, 63, 65, 66, 67, 80, 81, 82].includes(hour.weatherCode)) {
+    return { symbol: "🌧", label: "Lluvia" };
+  }
+  if ([71, 73, 75, 77, 85, 86].includes(hour.weatherCode)) return { symbol: "🌨", label: "Nieve" };
+  if ([95, 96, 99].includes(hour.weatherCode)) return { symbol: "⛈", label: "Tormenta" };
+  if (hour.sunMinutes >= 45) return { symbol: "☀︎", label: "Despejado" };
+  if (hour.sunMinutes >= 15) return { symbol: "⛅", label: "Con claros" };
+  return {
+    symbol: hour.isDay ? "☁︎" : "☾",
+    label: hour.isDay && hour.cloud >= 70 ? "Cubierto" : hour.isDay ? "Nublado" : "Noche",
+  };
 };
 
 const formatSnapshotTime = (value: string) =>
@@ -209,7 +225,7 @@ export default function Dashboard() {
         latitude: String(lat),
         longitude: String(lon),
         hourly:
-          "cloud_cover,sunshine_duration,precipitation_probability,precipitation,wind_speed_10m,wind_direction_10m",
+          "cloud_cover,sunshine_duration,weather_code,is_day,precipitation_probability,precipitation,wind_speed_10m,wind_direction_10m",
         forecast_days: "2",
         timezone: "auto",
       });
@@ -224,6 +240,8 @@ export default function Dashboard() {
           time,
           cloud: data.hourly.cloud_cover[index] ?? 0,
           sunMinutes: Math.round((data.hourly.sunshine_duration[index] ?? 0) / 60),
+          weatherCode: data.hourly.weather_code[index] ?? 0,
+          isDay: Boolean(data.hourly.is_day[index]),
           rainProbability: data.hourly.precipitation_probability[index] ?? 0,
           rain: data.hourly.precipitation[index] ?? 0,
           wind: Math.round(data.hourly.wind_speed_10m[index] ?? 0),
@@ -839,6 +857,7 @@ export default function Dashboard() {
               {forecastState === "ready" &&
                 forecast.map((hour, index) => {
                   const date = new Date(hour.time);
+                  const sky = skySymbol(hour);
                   const dayKey = date.toLocaleDateString("es-ES");
                   const previousDate = index > 0 ? new Date(forecast[index - 1].time) : null;
                   const startsDay =
@@ -863,10 +882,22 @@ export default function Dashboard() {
                         </div>
                         <div className="weather-metrics">
                           <div className="weather-metric sun">
-                            <strong>{describeSun(hour)}</strong>
+                            <strong className="sky-symbol" role="img" aria-label={sky.label} title={sky.label}>
+                              {sky.symbol}
+                            </strong>
                           </div>
                           <div className="weather-metric wind">
-                            <strong>{compass(hour.windDirection)} · {hour.wind} km/h</strong>
+                            <strong aria-label={`Viento ${compass(hour.windDirection)}, ${hour.wind} kilómetros por hora`}>
+                              {compass(hour.windDirection)}
+                              <span
+                                className="wind-arrow"
+                                aria-hidden="true"
+                                style={{ transform: `rotate(${hour.windDirection}deg)` }}
+                              >
+                                ↑
+                              </span>
+                              {hour.wind} km/h
+                            </strong>
                           </div>
                           <div className="weather-metric rain">
                             <strong>{hour.rainProbability}% <em>· {hour.rain.toFixed(1)} mm</em></strong>

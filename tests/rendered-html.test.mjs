@@ -88,6 +88,11 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(dashboard, /zIndexOffset: 2000/);
   assert.match(dashboard, /className="forecast-day-card"/);
   assert.match(dashboard, /startsDay/);
+  assert.match(dashboard, /className="wind-arrow"/);
+  assert.match(dashboard, /rotate\(\$\{hour\.windDirection\}deg\)/);
+  assert.match(dashboard, /weather_code,is_day/);
+  assert.match(dashboard, /className="sky-symbol"/);
+  assert.doesNotMatch(dashboard, /describeSun/);
   assert.match(css, /\.topbar\s*\{\s*height:\s*46px;/);
   assert.match(css, /\.forecast-panel\.open\s*\{\s*height:\s*176px;/);
   assert.doesNotMatch(css, /\.map-legend\.forecast-open\s*\{[^}]*opacity:\s*0/s);
