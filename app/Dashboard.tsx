@@ -54,10 +54,14 @@ type SnapshotData = {
   region: RegionData;
   layerTime: string;
   satellite?: {
+    schemaVersion?: 2;
     capturedAt: string;
     bounds: [[number, number], [number, number]];
     layers: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus", true>>;
     layerCapturedAt?: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus", string>>;
+    rasterDimensions?: Partial<
+      Record<"burnt" | "heat" | "smoke", { width: number; height: number }>
+    >;
     staleLayers?: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus", true>>;
     copernicus?: {
       areaProduct?: string;

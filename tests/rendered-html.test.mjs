@@ -110,6 +110,9 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(satelliteRoute, /X-Content-Type-Options/);
   assert.match(satelliteSnapshots, /effis\.nrt\.ba\.poly/);
   assert.match(satelliteSnapshots, /VIIRS_SNPP_Aerosol_Type_Deep_Blue_Best_Estimate/);
+  assert.match(satelliteSnapshots, /burnt: \{ width: 4096, height: 2731 \}/);
+  assert.match(satelliteSnapshots, /schemaVersion: 2/);
+  assert.match(satelliteSnapshots, /AbortSignal\.timeout\(45000\)/);
   assert.match(satelliteSnapshots, /captureSatelliteSnapshot/);
   assert.match(copernicusMap, /rapidmapping\.emergency\.copernicus\.eu/);
   assert.match(copernicusMap, /DATA_HOST = "rapidmapping-viewer\.s3\.eu-west-1\.amazonaws\.com"/);

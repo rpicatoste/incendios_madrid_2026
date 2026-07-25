@@ -7,12 +7,26 @@ export const SATELLITE_BOUNDS: [[number, number], [number, number]] = [
 ];
 export const SATELLITE_LAYERS = ["burnt", "heat", "smoke", "copernicus"] as const;
 export type SatelliteLayer = (typeof SATELLITE_LAYERS)[number];
+type RasterLayer = Exclude<SatelliteLayer, "copernicus">;
+
+const RASTER_DIMENSIONS: Record<RasterLayer, { width: number; height: number }> = {
+  // El área quemada necesita conservar el contorno al ampliar. 4096 px equivale
+  // aproximadamente a cuatro veces el detalle horizontal de la antigua copia.
+  burnt: { width: 4096, height: 2731 },
+  heat: { width: 2048, height: 1365 },
+  // El producto de aerosoles tiene una resolución nativa bastante menor.
+  smoke: { width: 1600, height: 1067 },
+};
 
 export type SatelliteSnapshot = {
+  schemaVersion?: 2;
   capturedAt: string;
   bounds: typeof SATELLITE_BOUNDS;
   layers: Partial<Record<SatelliteLayer, true>>;
   layerCapturedAt: Partial<Record<SatelliteLayer, string>>;
+  rasterDimensions?: Partial<
+    Record<RasterLayer, { width: number; height: number }>
+  >;
   staleLayers?: Partial<Record<SatelliteLayer, true>>;
   errors?: Partial<Record<SatelliteLayer, string>>;
   copernicus?: {
@@ -33,8 +47,9 @@ const layerPath = (hourId: string, layer: SatelliteLayer) =>
 const manifestPath = (storageId: string) =>
   join(satelliteDirectory, storageId, "manifest.json");
 
-const sourceUrl = (layer: Exclude<SatelliteLayer, "copernicus">, date: string) => {
+const sourceUrl = (layer: RasterLayer, date: string) => {
   const isEffis = layer !== "smoke";
+  const dimensions = RASTER_DIMENSIONS[layer];
   const url = new URL(
     isEffis
       ? "https://maps.effis.emergency.copernicus.eu/effis"
@@ -55,8 +70,8 @@ const sourceUrl = (layer: Exclude<SatelliteLayer, "copernicus">, date: string) =
     TRANSPARENT: "true",
     SRS: "EPSG:4326",
     BBOX: "-5.9,39.35,-1.7,42.15",
-    WIDTH: "1600",
-    HEIGHT: "1067",
+    WIDTH: String(dimensions.width),
+    HEIGHT: String(dimensions.height),
     TIME: date,
   };
   Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
@@ -72,11 +87,15 @@ const atomicWrite = async (path: string, contents: Uint8Array | string) => {
 
 const capturePng = async (
   hourId: string,
-  layer: Exclude<SatelliteLayer, "copernicus">,
+  layer: RasterLayer,
   date: string,
 ) => {
   const response = await fetch(sourceUrl(layer, date), {
-    headers: { "User-Agent": "FOCO-Centro/2.0" },
+    signal: AbortSignal.timeout(45000),
+    headers: {
+      "User-Agent": "FOCO-Centro/2.0",
+      Accept: "image/png",
+    },
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const bytes = new Uint8Array(await response.arrayBuffer());
@@ -89,7 +108,7 @@ const capturePng = async (
   ) {
     throw new Error("La fuente no devolvió PNG");
   }
-  if (bytes.length > 12 * 1024 * 1024) throw new Error("Imagen demasiado grande");
+  if (bytes.length > 24 * 1024 * 1024) throw new Error("Imagen demasiado grande");
   await atomicWrite(layerPath(hourId, layer), bytes);
 };
 
@@ -115,6 +134,7 @@ export const captureSatelliteSnapshot = async (
   ]);
   const layers: SatelliteSnapshot["layers"] = {};
   const layerCapturedAt: SatelliteSnapshot["layerCapturedAt"] = {};
+  const rasterDimensions: NonNullable<SatelliteSnapshot["rasterDimensions"]> = {};
   const staleLayers: NonNullable<SatelliteSnapshot["staleLayers"]> = {};
   const errors: NonNullable<SatelliteSnapshot["errors"]> = {};
   await Promise.all(SATELLITE_LAYERS.map(async (layer, index) => {
@@ -122,6 +142,7 @@ export const captureSatelliteSnapshot = async (
     if (result.status === "fulfilled") {
       layers[layer] = true;
       layerCapturedAt[layer] = capturedAt;
+      if (layer !== "copernicus") rasterDimensions[layer] = RASTER_DIMENSIONS[layer];
       return;
     }
     errors[layer] = result.reason instanceof Error ? result.reason.message : "Sin captura";
@@ -132,15 +153,21 @@ export const captureSatelliteSnapshot = async (
       staleLayers[layer] = true;
       layerCapturedAt[layer] =
         previous.layerCapturedAt?.[layer] || previous.capturedAt;
+      if (layer !== "copernicus") {
+        rasterDimensions[layer] =
+          previous.rasterDimensions?.[layer] || RASTER_DIMENSIONS[layer];
+      }
     } catch {
       // No existe una copia anterior válida que se pueda conservar.
     }
   }));
   const snapshot: SatelliteSnapshot = {
+    schemaVersion: 2,
     capturedAt,
     bounds: SATELLITE_BOUNDS,
     layers,
     layerCapturedAt,
+    rasterDimensions,
     ...(Object.keys(staleLayers).length ? { staleLayers } : {}),
     ...(Object.keys(errors).length ? { errors } : {}),
     copernicus: copernicusMap?.source
