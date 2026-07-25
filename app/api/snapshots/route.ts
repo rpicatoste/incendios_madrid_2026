@@ -122,7 +122,7 @@ export async function POST(request: Request) {
       const payload = await captureFromServer(request, capturedAt);
       const snapshots = await readSnapshots();
       const existingSnapshot = snapshots.find((item) => item.id === hourId);
-      if (existingSnapshot?.data.satellite) {
+      if (existingSnapshot?.data.satellite?.schemaVersion === 3) {
         return {
           action: "reused",
           snapshot: existingSnapshot,

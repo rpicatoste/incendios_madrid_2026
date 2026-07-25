@@ -133,6 +133,7 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(snapshotRoute, /captureFromServer\(request, capturedAt\)/);
   assert.match(snapshotRoute, /freezeSatelliteSnapshot/);
   assert.match(snapshotRoute, /action: "reused"/);
+  assert.match(snapshotRoute, /satellite\?\.schemaVersion === 3/);
   assert.match(snapshotRoute, /const payload = await captureFromServer/);
   assert.match(satelliteRoute, /HOUR_PATTERN/);
   assert.match(satelliteRoute, /X-Content-Type-Options/);
