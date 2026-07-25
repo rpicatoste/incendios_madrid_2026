@@ -978,6 +978,12 @@ button {
   border: 1px solid #704739;
   background: repeating-linear-gradient(135deg, #8b5a49 0 2px, #ead8cf 2px 4px);
 }
+.legend-front {
+  width: 14px;
+  height: 0;
+  flex: 0 0 14px;
+  border-top: 3px dashed #e2a317;
+}
 .legend-smoke {
   width: 13px;
   height: 10px;

@@ -62,12 +62,28 @@ test("rejects public mutations and hides the internal snapshot capture route", a
 
   const unknown = await request("/admin");
   assert.equal(unknown.status, 404);
+
+  const traversal = await request("/api/satellite?hour=../../etc&layer=burnt");
+  assert.equal(traversal.status, 404);
 });
 
 test("keeps upstream access fixed and the production listener private", async () => {
-  const [airRoute, snapshotRoute, worker, service, dashboard, css] = await Promise.all([
+  const [
+    airRoute,
+    snapshotRoute,
+    satelliteRoute,
+    satelliteSnapshots,
+    copernicusMap,
+    worker,
+    service,
+    dashboard,
+    css,
+  ] = await Promise.all([
     readFile(new URL("../app/api/air/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/snapshots/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/satellite/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/satellite-snapshots.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/copernicus-fire-map.ts", import.meta.url), "utf8"),
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../ops/foco-app.service", import.meta.url), "utf8"),
     readFile(new URL("../app/Dashboard.tsx", import.meta.url), "utf8"),
@@ -78,7 +94,15 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.doesNotMatch(airRoute, /child_process|execFile|spawn\(/);
   assert.match(snapshotRoute, /timingSafeEqual/);
   assert.match(snapshotRoute, /declaredLength > 128/);
-  assert.match(snapshotRoute, /captureFromServer\(request\)/);
+  assert.match(snapshotRoute, /captureFromServer\(request, capturedAt\)/);
+  assert.match(snapshotRoute, /freezeSatelliteSnapshot/);
+  assert.match(satelliteRoute, /HOUR_PATTERN/);
+  assert.match(satelliteRoute, /X-Content-Type-Options/);
+  assert.match(satelliteSnapshots, /effis\.nrt\.ba\.poly/);
+  assert.match(satelliteSnapshots, /VIIRS_SNPP_Aerosol_Type_Deep_Blue_Best_Estimate/);
+  assert.match(satelliteSnapshots, /captureSatelliteSnapshot/);
+  assert.match(copernicusMap, /rapidmapping\.emergency\.copernicus\.eu/);
+  assert.match(copernicusMap, /DATA_HOST = "rapidmapping-viewer\.s3\.eu-west-1\.amazonaws\.com"/);
   assert.match(worker, /\["GET", "HEAD"\]/);
   assert.match(service, /--hostname 127\.0\.0\.1/);
   assert.doesNotMatch(service, /--hostname 0\.0\.0\.0/);
@@ -92,6 +116,9 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(dashboard, /rotate\(\$\{hour\.windDirection\}deg\)/);
   assert.match(dashboard, /weather_code,is_day/);
   assert.match(dashboard, /className="sky-symbol"/);
+  assert.match(dashboard, /L\.imageOverlay/);
+  assert.match(dashboard, /event\.latlng\.lat, event\.latlng\.lng/);
+  assert.match(dashboard, /Frente observado/);
   assert.doesNotMatch(dashboard, /describeSun/);
   assert.match(css, /\.topbar\s*\{\s*height:\s*46px;/);
   assert.match(css, /\.forecast-panel\.open\s*\{\s*height:\s*176px;/);

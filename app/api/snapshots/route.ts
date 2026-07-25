@@ -2,12 +2,19 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { defaultRegionData } from "../../../lib/region-data";
+import { getCopernicusFireMap } from "../../../lib/copernicus-fire-map";
+import {
+  captureSatelliteSnapshot,
+  freezeSatelliteSnapshot,
+  type SatelliteSnapshot,
+} from "../../../lib/satellite-snapshots";
 
 type SnapshotPayload = {
   status: unknown;
   airStations: unknown[];
   region: unknown;
   layerTime: string;
+  satellite?: SatelliteSnapshot;
 };
 
 type StoredSnapshot = {
@@ -58,12 +65,16 @@ export async function GET() {
   }
 }
 
-const captureFromServer = async (request: Request): Promise<SnapshotPayload> => {
+const captureFromServer = async (
+  request: Request,
+  capturedAt: string,
+): Promise<SnapshotPayload> => {
   const origin = new URL(request.url).origin;
-  const [statusResponse, airResponse, regionResponse] = await Promise.all([
+  const [statusResponse, airResponse, regionResponse, copernicusMap] = await Promise.all([
     fetch(`${origin}/api/status`, { cache: "no-store" }),
     fetch(`${origin}/api/air`, { cache: "no-store" }),
     fetch(`${origin}/api/region`, { cache: "no-store" }),
+    getCopernicusFireMap(),
   ]);
   const [status, air, region] = await Promise.all([
     statusResponse.json(),
@@ -74,7 +85,8 @@ const captureFromServer = async (request: Request): Promise<SnapshotPayload> => 
     status,
     airStations: (air as { stations?: unknown[] }).stations || [],
     region,
-    layerTime: new Date().toISOString(),
+    layerTime: capturedAt,
+    satellite: await captureSatelliteSnapshot("live", capturedAt, copernicusMap),
   };
 };
 
@@ -103,12 +115,19 @@ export async function POST(request: Request) {
       return Response.json({ error: "Invalid request" }, { status: 400 });
     }
 
-    const payload = await captureFromServer(request);
     const capturedAt = new Date().toISOString();
     const hourId = capturedAt.slice(0, 13);
+    const payload = await captureFromServer(request, capturedAt);
 
     const snapshot = await withWriteLock(async () => {
       const snapshots = await readSnapshots();
+      const existingSnapshot = snapshots.find((item) => item.id === hourId);
+      if (existingSnapshot?.data.satellite) return existingSnapshot;
+      payload.satellite = await freezeSatelliteSnapshot(
+        "live",
+        hourId,
+        payload.satellite!,
+      );
       const newSnapshot: StoredSnapshot = {
         id: hourId,
         capturedAt,

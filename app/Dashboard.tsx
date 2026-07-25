@@ -53,6 +53,20 @@ type SnapshotData = {
   airStations: AirStation[];
   region: RegionData;
   layerTime: string;
+  satellite?: {
+    capturedAt: string;
+    bounds: [[number, number], [number, number]];
+    layers: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus", true>>;
+    layerCapturedAt?: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus", string>>;
+    staleLayers?: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus", true>>;
+    copernicus?: {
+      areaProduct?: string;
+      areaObservedAt?: string;
+      frontProduct?: string;
+      frontObservedAt?: string;
+      readAt?: string;
+    };
+  };
 };
 
 type SnapshotRecord = {
@@ -147,6 +161,11 @@ export default function Dashboard() {
   const heatLayerRef = useRef<any>(null);
   const burntLayerRef = useRef<any>(null);
   const smokeLayerRef = useRef<any>(null);
+  const historicalHeatLayerRef = useRef<any>(null);
+  const historicalBurntLayerRef = useRef<any>(null);
+  const historicalSmokeLayerRef = useRef<any>(null);
+  const copernicusBurntLayerRef = useRef<any>(null);
+  const copernicusFrontLayerRef = useRef<any>(null);
   const userMarkerRef = useRef<any>(null);
   const canvasRendererRef = useRef<any>(null);
   const forecastRequestRef = useRef<AbortController | null>(null);
@@ -155,6 +174,8 @@ export default function Dashboard() {
   const [liveStatus, setLiveStatus] = useState<LiveStatus>(fallbackStatus);
   const [liveAirStations, setLiveAirStations] = useState<AirStation[]>([]);
   const [liveRegion, setLiveRegion] = useState<RegionData>(defaultRegionData);
+  const [liveSatellite, setLiveSatellite] = useState<SnapshotData["satellite"]>(undefined);
+  const [cachedFireMap, setCachedFireMap] = useState<any>(null);
   const [snapshots, setSnapshots] = useState<SnapshotRecord[]>([]);
   const [snapshotIndex, setSnapshotIndex] = useState<number | null>(null);
   const [mapReady, setMapReady] = useState(false);
@@ -169,6 +190,7 @@ export default function Dashboard() {
   const [airVisible, setAirVisible] = useState(true);
   const [heatVisible, setHeatVisible] = useState(true);
   const [burntVisible, setBurntVisible] = useState(true);
+  const [frontVisible, setFrontVisible] = useState(true);
   const [smokeVisible, setSmokeVisible] = useState(true);
   const [fireAreasVisible, setFireAreasVisible] = useState(true);
   const [userVisible, setUserVisible] = useState(true);
@@ -183,8 +205,15 @@ export default function Dashboard() {
   const displayStatus = selectedSnapshot?.data.status || liveStatus;
   const displayAirStations = selectedSnapshot?.data.airStations || liveAirStations;
   const displayRegion = selectedSnapshot?.data.region || liveRegion;
+  const displayFireMap = cachedFireMap;
   const layerTime = selectedSnapshot?.data.layerTime || new Date().toISOString();
   const isLive = selectedSnapshot === null;
+  const displaySatellite = selectedSnapshot?.data.satellite || (isLive ? liveSatellite : undefined);
+  const satelliteStorageId = selectedSnapshot?.data.satellite
+    ? selectedSnapshot.id
+    : isLive && liveSatellite
+      ? "live"
+      : null;
 
   const visiblePoints = useMemo(
     () => displayRegion.points.filter((point) => point.kind === activeList),
@@ -293,10 +322,22 @@ export default function Dashboard() {
   useEffect(() => {
     let active = true;
     const refreshLiveData = async () => {
-      const [statusResult, airResult, regionResult, snapshotsResult] = await Promise.allSettled([
+      const [
+        statusResult,
+        airResult,
+        regionResult,
+        satelliteResult,
+        snapshotsResult,
+      ] = await Promise.allSettled([
         fetch("/api/status").then((response) => response.json()),
         fetch("/api/air").then((response) => response.json()),
         fetch("/api/region").then((response) => response.json()),
+        fetch("/api/satellite?hour=live&layer=manifest", { cache: "no-store" }).then(
+          (response) => {
+            if (!response.ok) throw new Error("Caché satelital aún no disponible");
+            return response.json();
+          },
+        ),
         fetch("/api/snapshots", { cache: "no-store" }).then((response) => response.json()),
       ]);
       if (!active) return;
@@ -313,6 +354,7 @@ export default function Dashboard() {
       setLiveStatus(status);
       setLiveAirStations(airStations);
       setLiveRegion(region);
+      if (satelliteResult.status === "fulfilled") setLiveSatellite(satelliteResult.value);
       if (snapshotsResult.status === "fulfilled") {
         setSnapshots((snapshotsResult.value as { snapshots?: SnapshotRecord[] }).snapshots || []);
       }
@@ -369,6 +411,8 @@ export default function Dashboard() {
 
         situationLayerRef.current = L.layerGroup().addTo(map);
         fireAreaLayerRef.current = L.layerGroup().addTo(map);
+        copernicusBurntLayerRef.current = L.layerGroup().addTo(map);
+        copernicusFrontLayerRef.current = L.layerGroup().addTo(map);
         airLayerRef.current = L.layerGroup().addTo(map);
 
         heatLayerRef.current = L.tileLayer
@@ -383,8 +427,7 @@ export default function Dashboard() {
             updateWhenZooming: false,
             keepBuffer: 1,
             attribution: "Copernicus EFFIS / NASA VIIRS",
-          })
-          .addTo(map);
+          });
 
         burntLayerRef.current = L.tileLayer
           .wms("https://maps.effis.emergency.copernicus.eu/effis", {
@@ -398,8 +441,7 @@ export default function Dashboard() {
             updateWhenZooming: false,
             keepBuffer: 1,
             attribution: "Copernicus EFFIS / GWIS",
-          })
-          .addTo(map);
+          });
 
         smokeLayerRef.current = L.tileLayer(
           `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_Aerosol_Type_Deep_Blue_Best_Estimate/default/${new Date().toISOString().slice(0, 10)}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.png`,
@@ -412,7 +454,7 @@ export default function Dashboard() {
             keepBuffer: 1,
             attribution: "NASA GIBS / VIIRS Deep Blue",
           },
-        ).addTo(map);
+        );
 
         map.on("click", (event: any) => {
           requestForecast(event.latlng.lat, event.latlng.lng);
@@ -448,6 +490,171 @@ export default function Dashboard() {
   }, [requestForecast, updateUserMarker]);
 
   useEffect(() => {
+    let active = true;
+    if (!displaySatellite?.layers.copernicus || !satelliteStorageId) {
+      setCachedFireMap(null);
+      return () => {
+        active = false;
+      };
+    }
+    fetch(
+      `/api/satellite?hour=${encodeURIComponent(satelliteStorageId)}&layer=copernicus&v=${encodeURIComponent(displaySatellite.capturedAt)}`,
+      { cache: satelliteStorageId === "live" ? "no-store" : "force-cache" },
+    )
+      .then((response) => {
+        if (!response.ok) throw new Error("Copernicus histórico no disponible");
+        return response.json();
+      })
+      .then((data) => {
+        if (active) setCachedFireMap(data);
+      })
+      .catch(() => {
+        if (active) setCachedFireMap(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [displaySatellite, satelliteStorageId]);
+
+  useEffect(() => {
+    if (!mapReady || !mapRef.current || !window.L) return;
+    const map = mapRef.current;
+    [
+      historicalBurntLayerRef,
+      historicalHeatLayerRef,
+      historicalSmokeLayerRef,
+    ].forEach((reference) => {
+      if (reference.current && map.hasLayer(reference.current)) {
+        map.removeLayer(reference.current);
+      }
+      reference.current = null;
+    });
+    const satellite = displaySatellite;
+    if (!satellite || !satelliteStorageId) return;
+    const layerUrl = (layer: "burnt" | "heat" | "smoke") =>
+      `/api/satellite?hour=${encodeURIComponent(satelliteStorageId)}&layer=${layer}&v=${encodeURIComponent(satellite.capturedAt)}`;
+    if (satellite.layers.burnt) {
+      historicalBurntLayerRef.current = window.L.imageOverlay(
+        layerUrl("burnt"),
+        satellite.bounds,
+        { opacity: 0.48, interactive: false },
+      );
+    }
+    if (satellite.layers.heat) {
+      historicalHeatLayerRef.current = window.L.imageOverlay(
+        layerUrl("heat"),
+        satellite.bounds,
+        { opacity: 0.78, interactive: false },
+      );
+    }
+    if (satellite.layers.smoke) {
+      historicalSmokeLayerRef.current = window.L.imageOverlay(
+        layerUrl("smoke"),
+        satellite.bounds,
+        { opacity: 0.52, interactive: false },
+      );
+    }
+  }, [displaySatellite, mapReady, satelliteStorageId]);
+
+  useEffect(() => {
+    if (
+      !mapReady ||
+      !window.L ||
+      !copernicusBurntLayerRef.current ||
+      !copernicusFrontLayerRef.current
+    ) {
+      return;
+    }
+    const L = window.L;
+    copernicusBurntLayerRef.current.clearLayers();
+    copernicusFrontLayerRef.current.clearLayers();
+    if (!displayFireMap?.features?.length) return;
+
+    const source = displayFireMap.source || {};
+    const observedArea = source.areaObservedAt
+      ? formatSnapshotTime(source.areaObservedAt)
+      : "hora no disponible";
+    const observedFront = source.frontObservedAt
+      ? formatSnapshotTime(source.frontObservedAt)
+      : "hora no disponible";
+    const areaFeature = displayFireMap.features.find(
+      (feature: any) => feature.properties?.kind === "burnt-area",
+    );
+    const frontFeatures = displayFireMap.features.filter(
+      (feature: any) =>
+        feature.properties?.kind === "fire-front" ||
+        feature.properties?.kind === "active-flame",
+    );
+
+    if (areaFeature) {
+      L.geoJSON(areaFeature, {
+        renderer: canvasRendererRef.current,
+        style: {
+          color: "#713a31",
+          weight: 1.2,
+          fillColor: "#a45b48",
+          fillOpacity: 0.34,
+        },
+        onEachFeature: (_feature: any, layer: any) => {
+          layer
+            .bindPopup(
+              `<div class="foco-popup"><span class="popup-kicker" style="color:#8d4938">COPERNICUS · ÁREA RECORRIDA</span><strong>La Mierla · Guadalajara</strong><p>Delimitación acumulada de los productos disponibles. Máximo cartografiado en un producto: ${Number(source.mappedAreaHectares || 0).toLocaleString("es-ES")} ha.</p><small>${escapeHtml(source.areaProduct || "Producto")}, observado ${escapeHtml(observedArea)} · lectura ${escapeHtml(source.readAt ? formatSnapshotTime(source.readAt) : "sin hora")}</small></div>`,
+              { closeButton: false },
+            )
+            .on("click", (event: any) =>
+              requestForecast(event.latlng.lat, event.latlng.lng),
+            );
+        },
+      }).addTo(copernicusBurntLayerRef.current);
+      L.circleMarker([40.953, -3.236], {
+        renderer: canvasRendererRef.current,
+        radius: 0,
+        opacity: 0,
+        fillOpacity: 0,
+        interactive: false,
+      })
+        .bindTooltip(
+          `La Mierla · Copernicus ${source.areaProduct || ""}`,
+          { permanent: true, direction: "center", className: "fire-area-label" },
+        )
+        .addTo(copernicusBurntLayerRef.current);
+    }
+
+    if (frontFeatures.length) {
+      L.geoJSON(
+        { type: "FeatureCollection", features: frontFeatures },
+        {
+          renderer: canvasRendererRef.current,
+          style: (feature: any) =>
+            feature?.properties?.kind === "fire-front"
+              ? { color: "#ffcc3d", weight: 4, opacity: 0.95, dashArray: "8 5" }
+              : {},
+          pointToLayer: (_feature: any, latlng: any) =>
+            L.circleMarker(latlng, {
+              renderer: canvasRendererRef.current,
+              radius: 3.5,
+              color: "#fff1ad",
+              weight: 1,
+              fillColor: "#ff5a32",
+              fillOpacity: 0.95,
+            }),
+          onEachFeature: (feature: any, layer: any) => {
+            const isFront = feature.properties?.kind === "fire-front";
+            layer
+              .bindPopup(
+                `<div class="foco-popup"><span class="popup-kicker" style="color:#d88713">COPERNICUS · ${isFront ? "FRENTE OBSERVADO" : "LLAMA ACTIVA OBSERVADA"}</span><strong>La Mierla · Guadalajara</strong><p>${isFront ? "Línea de frente de la última observación que incluye esta geometría." : "Detección puntual incluida en el producto más reciente."}</p><small>Observado ${escapeHtml(isFront ? observedFront : observedArea)} · no equivale a posición actual en tiempo real</small></div>`,
+                { closeButton: false },
+              )
+              .on("click", (event: any) =>
+                requestForecast(event.latlng.lat, event.latlng.lng),
+              );
+          },
+        },
+      ).addTo(copernicusFrontLayerRef.current);
+    }
+  }, [displayFireMap, mapReady, requestForecast]);
+
+  useEffect(() => {
     if (!mapReady || !situationLayerRef.current || !window.L) return;
     const L = window.L;
     situationLayerRef.current.clearLayers();
@@ -478,6 +685,7 @@ export default function Dashboard() {
     const L = window.L;
     fireAreaLayerRef.current.clearLayers();
     displayRegion.fires.forEach((fire) => {
+      if (fire.hasMappedPerimeter && displayFireMap?.features?.length) return;
       const areaLabel = fire.areaHectares
         ? ` · ${fire.areaHectares.toLocaleString("es-ES")} ha`
         : "";
@@ -500,10 +708,12 @@ export default function Dashboard() {
           `<div class="foco-popup"><span class="popup-kicker" style="color:#e74731">${escapeHtml(fire.level)} · ${escapeHtml(fire.provinces)}</span><strong>${escapeHtml(fire.name)}</strong><p>${escapeHtml(fire.status)}. ${fire.areaHectares ? `Superficie comunicada: ${fire.areaHectares.toLocaleString("es-ES")} ha. ` : ""}${escapeHtml(fire.detail)}</p><small>Zona orientativa, no perímetro · ${escapeHtml(fire.sourceLabel)} · ${escapeHtml(fire.sourceUpdatedAt)}</small></div>`,
           { closeButton: false },
         )
-        .on("click", () => requestForecast(fire.lat, fire.lon, fire.name))
+        .on("click", (event: any) =>
+          requestForecast(event.latlng.lat, event.latlng.lng),
+        )
         .addTo(fireAreaLayerRef.current);
     });
-  }, [displayRegion.fires, mapReady, requestForecast]);
+  }, [displayFireMap, displayRegion.fires, mapReady, requestForecast]);
 
   useEffect(() => {
     if (!mapReady || !airLayerRef.current || !window.L) return;
@@ -536,13 +746,30 @@ export default function Dashboard() {
       if (visible && !map.hasLayer(layer)) layer.addTo(map);
       if (!visible && map.hasLayer(layer)) map.removeLayer(layer);
     };
+    const hasFrozenSatellite = Boolean(displaySatellite);
     toggleLayer(airLayerRef.current, airVisible);
-    toggleLayer(heatLayerRef.current, heatVisible);
-    toggleLayer(burntLayerRef.current, burntVisible);
-    toggleLayer(smokeLayerRef.current, smokeVisible);
+    toggleLayer(heatLayerRef.current, heatVisible && !hasFrozenSatellite && !isLive);
+    toggleLayer(burntLayerRef.current, burntVisible && !hasFrozenSatellite && !isLive);
+    toggleLayer(smokeLayerRef.current, smokeVisible && !hasFrozenSatellite && !isLive);
+    toggleLayer(historicalHeatLayerRef.current, heatVisible && hasFrozenSatellite);
+    toggleLayer(historicalBurntLayerRef.current, burntVisible && hasFrozenSatellite);
+    toggleLayer(historicalSmokeLayerRef.current, smokeVisible && hasFrozenSatellite);
+    toggleLayer(copernicusBurntLayerRef.current, burntVisible);
+    toggleLayer(copernicusFrontLayerRef.current, frontVisible);
     toggleLayer(fireAreaLayerRef.current, fireAreasVisible);
     toggleLayer(userMarkerRef.current, userVisible);
-  }, [airVisible, burntVisible, fireAreasVisible, heatVisible, mapReady, smokeVisible, userVisible]);
+  }, [
+    airVisible,
+    burntVisible,
+    fireAreasVisible,
+    frontVisible,
+    heatVisible,
+    isLive,
+    mapReady,
+    displaySatellite,
+    smokeVisible,
+    userVisible,
+  ]);
 
   useEffect(() => {
     const date = layerTime.slice(0, 10);
@@ -805,11 +1032,26 @@ export default function Dashboard() {
               <button aria-pressed={fireAreasVisible} onClick={() => setFireAreasVisible(!fireAreasVisible)}>
                 <i className="legend-area"></i><span>Zona incendio</span><em>{fireAreasVisible ? "ON" : "OFF"}</em>
               </button>
-              <button aria-pressed={heatVisible} onClick={() => setHeatVisible(!heatVisible)}>
-                <i className="legend-hotspot"></i><span>Calor VIIRS</span><em>{heatVisible ? "ON" : "OFF"}</em>
+              <button
+                aria-pressed={heatVisible}
+                onClick={() => setHeatVisible(!heatVisible)}
+                title="Actividad térmica satelital reciente; orienta sobre actividad, no dibuja un frente exacto"
+              >
+                <i className="legend-hotspot"></i><span>Actividad VIIRS</span><em>{heatVisible ? "ON" : "OFF"}</em>
               </button>
-              <button aria-pressed={burntVisible} onClick={() => setBurntVisible(!burntVisible)}>
-                <i className="legend-burnt"></i><span>Área EFFIS</span><em>{burntVisible ? "ON" : "OFF"}</em>
+              <button
+                aria-pressed={burntVisible}
+                onClick={() => setBurntVisible(!burntVisible)}
+                title="Superficie recorrida por el fuego según EFFIS y Copernicus EMS"
+              >
+                <i className="legend-burnt"></i><span>Área recorrida</span><em>{burntVisible ? "ON" : "OFF"}</em>
+              </button>
+              <button
+                aria-pressed={frontVisible}
+                onClick={() => setFrontVisible(!frontVisible)}
+                title="Última línea de frente y llamas activas cartografiadas por Copernicus; consulta la hora de observación"
+              >
+                <i className="legend-front"></i><span>Frente observado</span><em>{frontVisible ? "ON" : "OFF"}</em>
               </button>
               <button aria-pressed={smokeVisible} onClick={() => setSmokeVisible(!smokeVisible)}>
                 <i className="legend-smoke"></i><span>Humo VIIRS</span><em>{smokeVisible ? "ON" : "OFF"}</em>
