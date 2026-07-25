@@ -75,6 +75,23 @@ type SnapshotRecord = {
   data: SnapshotData;
 };
 
+type SidebarTab = "news" | "evacuations" | "sources";
+
+type OfficialNews = {
+  id: string;
+  title: string;
+  body: string;
+  publishedAt: string;
+  url: string;
+  source: string;
+};
+
+type SourceRead = {
+  url: string;
+  readAt: string;
+  ok: boolean;
+};
+
 const OFFICIAL_URL =
   "https://www.comunidad.madrid/seguridad-emergencias-asem-112/incendio-forestal-sierra-oeste-ifsierraoeste-julio-2026";
 const DSN_URL = "https://www.dsn.gob.es/gl/node/32742";
@@ -152,6 +169,11 @@ const formatSnapshotTime = (value: string) =>
     minute: "2-digit",
   }).format(new Date(value));
 
+const formatReadTime = (value?: string) => {
+  if (!value || Number.isNaN(new Date(value).getTime())) return "Sin lectura todavía";
+  return `Leída ${formatSnapshotTime(value)}`;
+};
+
 export default function Dashboard() {
   const mapNodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
@@ -200,6 +222,14 @@ export default function Dashboard() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [activeList, setActiveList] = useState<StatusKind>("evacuado");
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("news");
+  const [officialNews, setOfficialNews] = useState<OfficialNews[]>([]);
+  const [sourceReads, setSourceReads] = useState<Record<string, SourceRead>>({});
+  const [newsReadAt, setNewsReadAt] = useState("");
+  const [airSourceReadAt, setAirSourceReadAt] = useState("");
+  const [regionReadAt, setRegionReadAt] = useState("");
+  const [weatherReadAt, setWeatherReadAt] = useState("");
+  const [baseMapReadAt, setBaseMapReadAt] = useState("");
 
   const selectedSnapshot = snapshotIndex === null ? null : snapshots[snapshotIndex] || null;
   const displayStatus = selectedSnapshot?.data.status || liveStatus;
@@ -285,6 +315,7 @@ export default function Dashboard() {
       forecastCacheRef.current.set(cacheKey, rows);
       setForecast(rows);
       setForecastState("ready");
+      setWeatherReadAt(new Date().toISOString());
     } catch (error) {
       if ((error as Error).name === "AbortError") return;
       setForecast([]);
@@ -328,6 +359,7 @@ export default function Dashboard() {
         regionResult,
         satelliteResult,
         snapshotsResult,
+        newsResult,
       ] = await Promise.allSettled([
         fetch("/api/status").then((response) => response.json()),
         fetch("/api/air").then((response) => response.json()),
@@ -339,6 +371,7 @@ export default function Dashboard() {
           },
         ),
         fetch("/api/snapshots", { cache: "no-store" }).then((response) => response.json()),
+        fetch("/api/news").then((response) => response.json()),
       ]);
       if (!active) return;
 
@@ -354,9 +387,25 @@ export default function Dashboard() {
       setLiveStatus(status);
       setLiveAirStations(airStations);
       setLiveRegion(region);
+      if (airResult.status === "fulfilled") {
+        setAirSourceReadAt((airResult.value as { fetchedAt?: string }).fetchedAt || "");
+      }
+      if (regionResult.status === "fulfilled") {
+        setRegionReadAt((regionResult.value as RegionData & { fetchedAt?: string }).fetchedAt || "");
+      }
       if (satelliteResult.status === "fulfilled") setLiveSatellite(satelliteResult.value);
       if (snapshotsResult.status === "fulfilled") {
         setSnapshots((snapshotsResult.value as { snapshots?: SnapshotRecord[] }).snapshots || []);
+      }
+      if (newsResult.status === "fulfilled") {
+        const newsPayload = newsResult.value as {
+          items?: OfficialNews[];
+          readAt?: string;
+          sourceReads?: Record<string, SourceRead>;
+        };
+        setOfficialNews(newsPayload.items || []);
+        setSourceReads(newsPayload.sourceReads || {});
+        setNewsReadAt(newsPayload.readAt || "");
       }
     };
 
@@ -402,7 +451,9 @@ export default function Dashboard() {
           updateWhenIdle: true,
           keepBuffer: 2,
           attribution: "© OpenStreetMap",
-        }).addTo(map);
+        })
+          .once("load", () => setBaseMapReadAt(new Date().toISOString()))
+          .addTo(map);
         L.control.zoom({ position: "bottomright" }).addTo(map);
         canvasRendererRef.current = L.canvas({ padding: 0.3, tolerance: 8 });
         map.createPane("foco-user-location");
@@ -672,7 +723,7 @@ export default function Dashboard() {
       });
       marker
         .bindPopup(
-          `<div class="foco-popup"><span class="popup-kicker" style="color:${meta.color}">${meta.label} · ${escapeHtml(point.province)}</span><strong>${escapeHtml(point.name)}</strong><p>${escapeHtml(point.detail)}</p><small>${escapeHtml(point.sourceLabel)} · ${escapeHtml(point.sourceUpdatedAt)}</small></div>`,
+          `<div class="foco-popup"><span class="popup-kicker" style="color:${meta.color}">${meta.label} · ${escapeHtml(point.province)}</span><strong>${escapeHtml(point.name)}</strong><p>${escapeHtml(point.detail)}</p><small>${escapeHtml(point.sourceLabel)} · ${escapeHtml(point.sourceUpdatedAt)}<br>Punto representativo geocodificado; no es un perímetro oficial.</small></div>`,
           { closeButton: false, offset: [0, -9] },
         )
         .on("click", () => requestForecast(point.lat, point.lon, point.name))
@@ -826,6 +877,131 @@ export default function Dashboard() {
     setActiveKinds((previous) => ({ ...previous, [kind]: !previous[kind] }));
   };
 
+  const sourceItems = [
+    {
+      id: "x112",
+      icon: "X",
+      className: "",
+      title: "@112cmadrid",
+      detail: "Avisos públicos operativos y ES-Alert",
+      url: "https://x.com/112cmadrid",
+      read: sourceReads.x112?.readAt || newsReadAt,
+      ok: sourceReads.x112?.ok,
+    },
+    {
+      id: "madrid",
+      icon: "CM",
+      className: "source-icon--cm",
+      title: "Comunidad de Madrid",
+      detail: "Parte autonómico; localidades y carreteras",
+      url: OFFICIAL_URL,
+      read: displayStatus.fetchedAt || sourceReads.madrid?.readAt || regionReadAt,
+      ok: sourceReads.madrid?.ok,
+    },
+    {
+      id: "dsn",
+      icon: "ES",
+      className: "source-icon--es",
+      title: "Seguridad Nacional",
+      detail: "Datos incorporados: 24 jul · 08:00",
+      url: DSN_URL,
+      read: sourceReads.dsn?.readAt,
+      ok: sourceReads.dsn?.ok,
+    },
+    {
+      id: "clm",
+      icon: "CLM",
+      className: "source-icon--clm",
+      title: "Castilla-La Mancha",
+      detail: "Parte oficial de La Mierla y Sierra Norte",
+      url: CLM_URL,
+      read: sourceReads.clm?.readAt || regionReadAt,
+      ok: sourceReads.clm?.ok,
+    },
+    {
+      id: "cems",
+      icon: "EU",
+      className: "source-icon--eu",
+      title: "Copernicus EMSR898",
+      detail: displaySatellite?.copernicus?.areaObservedAt
+        ? `Área observada ${formatSnapshotTime(displaySatellite.copernicus.areaObservedAt)}`
+        : "Perímetro y frente cartografiados de La Mierla",
+      url: CEMS_LA_MIERLA_URL,
+      read: displaySatellite?.copernicus?.readAt || displaySatellite?.layerCapturedAt?.copernicus,
+      ok: Boolean(displaySatellite?.layers.copernicus),
+    },
+    {
+      id: "effis-area",
+      icon: "EU",
+      className: "source-icon--eu",
+      title: "Copernicus EFFIS · área",
+      detail: "Superficie recorrida; copia completa servida desde caché",
+      url: "https://forest-fire.emergency.copernicus.eu/apps/effis_current_situation/",
+      read: displaySatellite?.layerCapturedAt?.burnt,
+      ok: Boolean(displaySatellite?.layers.burnt),
+    },
+    {
+      id: "effis-heat",
+      icon: "EU",
+      className: "source-icon--eu",
+      title: "EFFIS / NASA VIIRS · calor",
+      detail: "Actividad térmica; no equivale a un frente exacto",
+      url: "https://forest-fire.emergency.copernicus.eu/apps/effis_current_situation/",
+      read: displaySatellite?.layerCapturedAt?.heat,
+      ok: Boolean(displaySatellite?.layers.heat),
+    },
+    {
+      id: "smoke",
+      icon: "NASA",
+      className: "source-icon--nasa",
+      title: "NASA GIBS · aerosoles",
+      detail: "Capa VIIRS usada como indicio visual de humo",
+      url: "https://gibs.earthdata.nasa.gov/",
+      read: displaySatellite?.layerCapturedAt?.smoke,
+      ok: Boolean(displaySatellite?.layers.smoke),
+    },
+    {
+      id: "air",
+      icon: "ICA",
+      className: "source-icon--air",
+      title: "MITECO · calidad del aire",
+      detail: `${displayAirStations.length} estaciones en la vista`,
+      url: MITECO_ICA_URL,
+      read: selectedSnapshot?.capturedAt || airSourceReadAt,
+      ok: displayAirStations.length > 0,
+    },
+    {
+      id: "region",
+      icon: "⌖",
+      className: "source-icon--local",
+      title: "FOCO · posiciones",
+      detail: "Centroides representativos; no perímetros oficiales",
+      url: OFFICIAL_URL,
+      read: selectedSnapshot?.capturedAt || regionReadAt,
+      ok: true,
+    },
+    {
+      id: "weather",
+      icon: "MET",
+      className: "source-icon--weather",
+      title: "Open-Meteo",
+      detail: "Previsión del último punto pulsado",
+      url: "https://open-meteo.com/",
+      read: weatherReadAt,
+      ok: weatherReadAt ? true : undefined,
+    },
+    {
+      id: "osm",
+      icon: "OSM",
+      className: "source-icon--osm",
+      title: "OpenStreetMap",
+      detail: "Mapa base descargado bajo demanda",
+      url: "https://www.openstreetmap.org/",
+      read: baseMapReadAt,
+      ok: baseMapReadAt ? true : undefined,
+    },
+  ];
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -878,112 +1054,165 @@ export default function Dashboard() {
               <b>Situación y fuentes</b>
               <button type="button" onClick={() => setMobileSidebarOpen(false)} aria-label="Cerrar panel">×</button>
             </div>
-            <div className="eyebrow-row">
-              <span className="eyebrow">{isLive ? "SITUACIÓN ACTUAL" : "VISTA HISTÓRICA"}</span>
-              <span className="refresh-time">
-                {isLive ? `Parte: ${displayStatus.lastUpdated}` : formatSnapshotTime(selectedSnapshot?.capturedAt || "")}
-              </span>
-            </div>
-
-            <section className="alert-card">
-              <div className="alert-level"><span>3</span></div>
-              <div>
-                <span className="alert-kicker">EMERGENCIA DE INTERÉS NACIONAL</span>
-                <h1>Incendios forestales · Zona Centro</h1>
-                <p>Madrid, Ávila, Toledo y Guadalajara en una única vista operacional y satelital.</p>
-              </div>
-              <a href={DSN_URL} target="_blank" rel="noreferrer">Parte nacional ↗</a>
-            </section>
-
-            <div className="metric-grid" aria-label="Resumen de afectaciones">
-              {(["evacuado", "confinado", "acogida", "seguimiento"] as StatusKind[]).map((kind) => (
+            <nav className="sidebar-tabs" aria-label="Secciones del panel">
+              {([
+                ["news", "Noticias"],
+                ["evacuations", "Evacuaciones"],
+                ["sources", "Fuentes"],
+              ] as [SidebarTab, string][]).map(([tab, label]) => (
                 <button
-                  key={kind}
-                  className={activeList === kind ? "active" : ""}
-                  onClick={() => setActiveList(kind)}
+                  key={tab}
+                  type="button"
+                  className={sidebarTab === tab ? "active" : ""}
+                  aria-selected={sidebarTab === tab}
+                  onClick={() => setSidebarTab(tab)}
                 >
-                  <strong>{counts[kind]}</strong>
-                  <span>{kind === "evacuado" ? "evacuación" : kind === "confinado" ? "confinado" : kind === "acogida" ? "acogida" : "seguimiento"}</span>
+                  {label}
                 </button>
               ))}
-            </div>
-            <p className="roads-summary">{displayStatus.roads.length} carreteras señaladas en el parte de Madrid</p>
+            </nav>
 
-            <section className="location-section">
-              <div className="section-title">
-                <h2>{kindMeta[activeList].plural}</h2>
-                <button
-                  className={`layer-switch layer-switch--${activeList}`}
-                  aria-pressed={activeKinds[activeList]}
-                  onClick={() => toggleKind(activeList)}
-                >
-                  {activeKinds[activeList] ? "Visible" : "Oculto"}
-                </button>
-              </div>
-              <div className="location-list">
-                {visiblePoints.map((point) => (
-                  <button key={point.id} onClick={() => focusPoint(point)}>
-                    <span className={`list-symbol list-symbol--${point.kind}`}>{kindMeta[point.kind].icon}</span>
+            {sidebarTab === "news" && (
+              <section className="sidebar-tab-panel news-panel" aria-label="Últimas noticias oficiales">
+                <div className="eyebrow-row">
+                  <span className="eyebrow">{isLive ? "ÚLTIMA HORA OFICIAL" : "PARTE DEL SNAPSHOT"}</span>
+                  <span className="refresh-time">{formatReadTime(newsReadAt)}</span>
+                </div>
+
+                <a className="official-brief" href={OFFICIAL_URL} target="_blank" rel="noreferrer">
+                  <span className="official-brief-kicker">COMUNIDAD DE MADRID · {displayStatus.lastUpdated}</span>
+                  <b>Sierra Oeste: {counts.evacuado} evacuaciones y {counts.confinado} confinamientos señalados</b>
+                  <small>{displayStatus.roads.length} carreteras incluidas en el parte · abrir fuente ↗</small>
+                </a>
+
+                <div className="news-list">
+                  {officialNews.map((item) => (
+                    <a key={item.id} className="news-card" href={item.url} target="_blank" rel="noreferrer">
+                      <span>
+                        <b>{item.source}</b>
+                        <time dateTime={item.publishedAt}>{formatSnapshotTime(item.publishedAt)}</time>
+                      </span>
+                      <p>{item.body}</p>
+                      <small>Publicación oficial en X ↗</small>
+                    </a>
+                  ))}
+                  {!officialNews.length && (
+                    <a className="news-card news-card--empty" href="https://x.com/112cmadrid" target="_blank" rel="noreferrer">
+                      <span><b>@112cmadrid</b><time>{formatReadTime(newsReadAt)}</time></span>
+                      <p>No se han podido extraer avisos relevantes del timeline público. Puedes abrir el canal oficial directamente.</p>
+                      <small>Abrir X ↗</small>
+                    </a>
+                  )}
+                  <a className="news-card news-card--satellite" href={CEMS_LA_MIERLA_URL} target="_blank" rel="noreferrer">
                     <span>
-                      <b>{point.name}</b>
-                      <small>{point.province} · {point.sourceUpdatedAt}</small>
+                      <b>Copernicus EMSR898 · La Mierla</b>
+                      <time>
+                        {displaySatellite?.copernicus?.areaObservedAt
+                          ? formatSnapshotTime(displaySatellite.copernicus.areaObservedAt)
+                          : "Esperando caché"}
+                      </time>
                     </span>
-                    <i>⌖</i>
-                  </button>
-                ))}
-                {!visiblePoints.length && <p className="empty-list">No hay puntos de este tipo en la vista seleccionada.</p>}
-              </div>
-            </section>
+                    <p>
+                      Perímetro cartografiado
+                      {cachedFireMap?.source?.mappedAreaHectares
+                        ? `: ${Number(cachedFireMap.source.mappedAreaHectares).toLocaleString("es-ES")} ha`
+                        : ""}
+                      . El frente y las llamas muestran su hora de observación, no una posición en tiempo real.
+                    </p>
+                    <small>Abrir activación oficial ↗</small>
+                  </a>
+                </div>
+              </section>
+            )}
 
-            <section className="sources-card">
-              <div>
-                <span className="eyebrow">FUENTES EN DIRECTO</span>
-                <span className="verified">Oficiales</span>
-              </div>
-              <a href="https://x.com/112cmadrid" target="_blank" rel="noreferrer">
-                <span className="source-icon">X</span>
-                <span><b>@112cmadrid</b><small>Avisos operativos y ES-Alert</small></span>
-                <i>↗</i>
-              </a>
-              <a href={DSN_URL} target="_blank" rel="noreferrer">
-                <span className="source-icon source-icon--es">ES</span>
-                <span><b>Seguridad Nacional</b><small>Situación consolidada interregional</small></span>
-                <i>↗</i>
-              </a>
-              <a href={CLM_URL} target="_blank" rel="noreferrer">
-                <span className="source-icon source-icon--clm">CLM</span>
-                <span><b>Castilla-La Mancha</b><small>La Mierla y Sierra Norte</small></span>
-                <i>↗</i>
-              </a>
-              <a href={CEMS_LA_MIERLA_URL} target="_blank" rel="noreferrer">
-                <span className="source-icon source-icon--eu">EU</span>
-                <span><b>Copernicus EMSR898</b><small>Cartografía satelital de La Mierla</small></span>
-                <i>↗</i>
-              </a>
-              <a href={OFFICIAL_URL} target="_blank" rel="noreferrer">
-                <span className="source-icon source-icon--cm">CM</span>
-                <span><b>Comunidad de Madrid</b><small>Parte autonómico de la emergencia</small></span>
-                <i>↗</i>
-              </a>
-              <a href={MITECO_ICA_URL} target="_blank" rel="noreferrer">
-                <span className="source-icon source-icon--air">ICA</span>
-                <span><b>MITECO · calidad del aire</b><small>Red nacional, actualización horaria</small></span>
-                <i>↗</i>
-              </a>
-              <a href="https://forest-fire.emergency.copernicus.eu/apps/effis_current_situation/" target="_blank" rel="noreferrer">
-                <span className="source-icon source-icon--eu">EU</span>
-                <span><b>Copernicus EFFIS</b><small>Calor y superficie detectada por satélite</small></span>
-                <i>↗</i>
-              </a>
-              <a href="https://gibs.earthdata.nasa.gov/" target="_blank" rel="noreferrer">
-                <span className="source-icon source-icon--nasa">NASA</span>
-                <span><b>NASA GIBS · VIIRS</b><small>Tipo de aerosol: humo rojo, humo alto violeta</small></span>
-                <i>↗</i>
-              </a>
-            </section>
+            {sidebarTab === "evacuations" && (
+              <section className="sidebar-tab-panel" aria-label="Evacuaciones y afectaciones">
+                <div className="eyebrow-row">
+                  <span className="eyebrow">{isLive ? "SITUACIÓN ACTUAL" : "VISTA HISTÓRICA"}</span>
+                  <span className="refresh-time">
+                    {isLive ? `Parte: ${displayStatus.lastUpdated}` : formatSnapshotTime(selectedSnapshot?.capturedAt || "")}
+                  </span>
+                </div>
+
+                <section className="alert-card">
+                  <div className="alert-level"><span>3</span></div>
+                  <div>
+                    <span className="alert-kicker">EMERGENCIA DE INTERÉS NACIONAL</span>
+                    <h1>Incendios forestales · Zona Centro</h1>
+                    <p>Madrid, Ávila, Toledo y Guadalajara en una única vista operacional y satelital.</p>
+                  </div>
+                  <a href={DSN_URL} target="_blank" rel="noreferrer">Parte nacional ↗</a>
+                </section>
+
+                <div className="metric-grid" aria-label="Resumen de afectaciones">
+                  {(["evacuado", "confinado", "acogida", "seguimiento"] as StatusKind[]).map((kind) => (
+                    <button
+                      key={kind}
+                      className={activeList === kind ? "active" : ""}
+                      onClick={() => setActiveList(kind)}
+                    >
+                      <strong>{counts[kind]}</strong>
+                      <span>{kind === "evacuado" ? "evacuación" : kind === "confinado" ? "confinado" : kind === "acogida" ? "acogida" : "seguimiento"}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="roads-summary">{displayStatus.roads.length} carreteras señaladas en el parte de Madrid</p>
+
+                <section className="location-section">
+                  <div className="section-title">
+                    <h2>{kindMeta[activeList].plural}</h2>
+                    <button
+                      className={`layer-switch layer-switch--${activeList}`}
+                      aria-pressed={activeKinds[activeList]}
+                      onClick={() => toggleKind(activeList)}
+                    >
+                      {activeKinds[activeList] ? "Visible" : "Oculto"}
+                    </button>
+                  </div>
+                  <p className="geocode-note">Los símbolos son puntos representativos geocodificados, no áreas oficiales de evacuación.</p>
+                  <div className="location-list">
+                    {visiblePoints.map((point) => (
+                      <button key={point.id} onClick={() => focusPoint(point)}>
+                        <span className={`list-symbol list-symbol--${point.kind}`}>{kindMeta[point.kind].icon}</span>
+                        <span>
+                          <b>{point.name}</b>
+                          <small>{point.province} · {point.sourceUpdatedAt}</small>
+                        </span>
+                        <i>⌖</i>
+                      </button>
+                    ))}
+                    {!visiblePoints.length && <p className="empty-list">No hay puntos de este tipo en la vista seleccionada.</p>}
+                  </div>
+                </section>
+              </section>
+            )}
+
+            {sidebarTab === "sources" && (
+              <section className="sidebar-tab-panel sources-card" aria-label="Fuentes de datos y últimas lecturas">
+                <div>
+                  <span className="eyebrow">FUENTES UTILIZADAS</span>
+                  <span className="verified">Trazabilidad</span>
+                </div>
+                <p className="sources-intro">La lectura indica cuándo FOCO consultó o congeló cada capa; la observación del satélite puede ser anterior.</p>
+                {sourceItems.map((source) => (
+                  <a key={source.id} href={source.url} target="_blank" rel="noreferrer">
+                    <span className={`source-icon ${source.className}`}>{source.icon}</span>
+                    <span>
+                      <b>{source.title}</b>
+                      <small>{source.detail}</small>
+                      <em className={source.ok === false ? "source-read source-read--error" : "source-read"}>
+                        {formatReadTime(source.read)}
+                        {source.ok === false ? " · fuente no accesible en esa lectura" : ""}
+                      </em>
+                    </span>
+                    <i>↗</i>
+                  </a>
+                ))}
+              </section>
+            )}
 
             <p className="safety-note">
-              Visor informativo. Los círculos rojos son zonas orientativas, no perímetros. Ante una emergencia sigue ES-Alert, las instrucciones oficiales y llama al 112.
+              Visor informativo. Círculos y puntos de localidades son referencias orientativas, no perímetros oficiales. Ante una emergencia sigue ES-Alert, las instrucciones oficiales y llama al 112.
             </p>
           </div>
         </aside>

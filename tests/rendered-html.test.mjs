@@ -39,7 +39,9 @@ test("server-renders FOCO Centro with the public security policy", async () => {
   assert.match(html, /<b>FOCO<\/b><small>CENTRO<\/small>/);
   assert.match(html, /Seguimiento activo/);
   assert.match(html, /Humo VIIRS/);
-  assert.match(html, /MITECO · calidad del aire/);
+  assert.match(html, /Noticias/);
+  assert.match(html, /Evacuaciones/);
+  assert.match(html, /Fuentes/);
   assert.match(html, /Abrir panel de situación/);
   assert.match(html, /Copernicus EMSR898/);
   assert.match(html, /Ver incendios/);
@@ -78,6 +80,7 @@ test("keeps upstream access fixed and the production listener private", async ()
     service,
     dashboard,
     css,
+    newsRoute,
   ] = await Promise.all([
     readFile(new URL("../app/api/air/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/snapshots/route.ts", import.meta.url), "utf8"),
@@ -88,6 +91,7 @@ test("keeps upstream access fixed and the production listener private", async ()
     readFile(new URL("../ops/foco-app.service", import.meta.url), "utf8"),
     readFile(new URL("../app/Dashboard.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/news/route.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(airRoute, /const ICA_URL = "https:\/\/ica\.miteco\.es\/datos\/ica-ultima-hora\.csv"/);
@@ -119,7 +123,13 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(dashboard, /L\.imageOverlay/);
   assert.match(dashboard, /event\.latlng\.lat, event\.latlng\.lng/);
   assert.match(dashboard, /Frente observado/);
+  assert.match(dashboard, /Centroides representativos; no perímetros oficiales/);
+  assert.match(dashboard, /MITECO · calidad del aire/);
+  assert.match(dashboard, /\["news", "Noticias"\]/);
   assert.doesNotMatch(dashboard, /describeSun/);
+  assert.match(newsRoute, /const X_PROFILE_URL = "https:\/\/x\.com\/112cmadrid"/);
+  assert.match(newsRoute, /Promise\.allSettled/);
+  assert.doesNotMatch(newsRoute, /request\.url|searchParams/);
   assert.match(css, /\.topbar\s*\{\s*height:\s*46px;/);
   assert.match(css, /\.forecast-panel\.open\s*\{\s*height:\s*176px;/);
   assert.doesNotMatch(css, /\.map-legend\.forecast-open\s*\{[^}]*opacity:\s*0/s);

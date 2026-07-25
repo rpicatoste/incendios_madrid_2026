@@ -264,6 +264,39 @@ button {
   scrollbar-color: #c9d1cc transparent;
 }
 
+.sidebar-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 14px;
+  background: #e9eeea;
+  border: 1px solid #dce3de;
+  border-radius: 10px;
+}
+
+.sidebar-tabs button {
+  min-width: 0;
+  padding: 8px 5px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #667476;
+  font-size: 9px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.sidebar-tabs button.active {
+  color: var(--dark);
+  background: white;
+  box-shadow: 0 2px 8px rgba(24, 48, 48, 0.09);
+}
+
+.sidebar-tab-panel {
+  min-height: 0;
+}
+
 .eyebrow-row,
 .section-title,
 .sources-card > div {
@@ -401,6 +434,16 @@ button {
   font-size: 8px;
 }
 
+.geocode-note {
+  margin: 8px 0 3px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  background: #edf2ee;
+  color: #687779;
+  font-size: 8px;
+  line-height: 1.4;
+}
+
 .location-section {
   border-top: 1px solid var(--line);
   padding-top: 14px;
@@ -498,6 +541,19 @@ button {
   border-top: 1px solid var(--line);
 }
 
+.sidebar-tab-panel.sources-card {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.sources-intro {
+  margin: 8px 1px 2px;
+  color: #718082;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
 .verified {
   font-size: 8px;
   color: var(--green);
@@ -543,6 +599,9 @@ button {
 .source-icon--clm { background: #743737; font-size: 7px; }
 .source-icon--air { background: #187b72; font-size: 7px; }
 .source-icon--nasa { background: #1f436f; font-size: 6px; }
+.source-icon--local { background: #526c68; font-size: 12px; }
+.source-icon--weather { background: #2784aa; font-size: 6px; }
+.source-icon--osm { background: #4f7a54; font-size: 6px; }
 
 .sources-card b,
 .sources-card small {
@@ -563,6 +622,119 @@ button {
   font-style: normal;
   color: #94a19f;
   font-size: 10px;
+}
+
+.source-read {
+  display: block;
+  margin-top: 3px;
+  color: #318169;
+  font-size: 7px;
+  font-style: normal;
+  line-height: 1.25;
+}
+
+.source-read--error {
+  color: #a26937;
+}
+
+.official-brief {
+  display: block;
+  margin-top: 9px;
+  padding: 13px;
+  border-radius: 10px;
+  color: white;
+  background: linear-gradient(135deg, #123536, #0d2729);
+  box-shadow: 0 8px 22px rgba(20, 46, 47, 0.14);
+  text-decoration: none;
+}
+
+.official-brief-kicker {
+  display: block;
+  margin-bottom: 6px;
+  color: #ff8b78;
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.official-brief b {
+  display: block;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.official-brief small {
+  display: block;
+  margin-top: 7px;
+  color: #c5d0cf;
+  font-size: 8px;
+}
+
+.news-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.news-card {
+  display: block;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: inherit;
+  background: white;
+  text-decoration: none;
+  transition: border-color 150ms ease, transform 150ms ease;
+}
+
+.news-card:hover {
+  border-color: #aebbb7;
+  transform: translateY(-1px);
+}
+
+.news-card > span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.news-card b {
+  color: #213638;
+  font-size: 8px;
+}
+
+.news-card time {
+  flex: 0 0 auto;
+  color: #7c898a;
+  font-size: 7px;
+}
+
+.news-card p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 6px 0 5px;
+  color: #4f6062;
+  font-size: 9px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+}
+
+.news-card small {
+  color: #2f7a6d;
+  font-size: 7px;
+  font-weight: 700;
+}
+
+.news-card--satellite {
+  border-color: #d9d7b5;
+  background: #fffef4;
+}
+
+.news-card--empty {
+  background: #f5f7f4;
 }
 
 .safety-note {
