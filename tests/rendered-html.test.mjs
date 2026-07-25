@@ -81,6 +81,9 @@ test("keeps upstream access fixed and the production listener private", async ()
     dashboard,
     css,
     newsRoute,
+    statusRoute,
+    madridStatus,
+    liveRegion,
   ] = await Promise.all([
     readFile(new URL("../app/api/air/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/snapshots/route.ts", import.meta.url), "utf8"),
@@ -92,6 +95,9 @@ test("keeps upstream access fixed and the production listener private", async ()
     readFile(new URL("../app/Dashboard.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/api/news/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/status/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/madrid-status.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/live-region.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(airRoute, /const ICA_URL = "https:\/\/ica\.miteco\.es\/datos\/ica-ultima-hora\.csv"/);
@@ -135,6 +141,12 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(newsRoute, /const X_PROFILE_URL = "https:\/\/x\.com\/112cmadrid"/);
   assert.match(newsRoute, /Promise\.allSettled/);
   assert.doesNotMatch(newsRoute, /request\.url|searchParams/);
+  assert.match(statusRoute, /getMadridStatus/);
+  assert.match(madridStatus, /authoritative/);
+  assert.match(madridStatus, /Municipios evacuados/);
+  assert.match(liveRegion, /status\.authoritative\.evacuated/);
+  assert.match(liveRegion, /nominatim\.openstreetmap\.org\/search/);
+  assert.match(liveRegion, /geocodes\.json/);
   assert.match(css, /\.topbar\s*\{\s*height:\s*46px;/);
   assert.match(css, /\.forecast-panel\.open\s*\{\s*height:\s*176px;/);
   assert.doesNotMatch(css, /\.map-legend\.forecast-open\s*\{[^}]*opacity:\s*0/s);

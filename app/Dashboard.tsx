@@ -1000,7 +1000,9 @@ export default function Dashboard() {
       icon: "⌖",
       className: "source-icon--local",
       title: "FOCO · posiciones",
-      detail: "Centroides representativos; no perímetros oficiales",
+      detail: displayRegion.unmappedLocations?.length
+        ? `Centroides representativos · ${displayRegion.unmappedLocations.length} nombres sin ubicar`
+        : "Centroides representativos; no perímetros oficiales",
       url: OFFICIAL_URL,
       read: selectedSnapshot?.capturedAt || regionReadAt,
       ok: true,
@@ -1194,7 +1196,12 @@ export default function Dashboard() {
                       {activeKinds[activeList] ? "Visible" : "Oculto"}
                     </button>
                   </div>
-                  <p className="geocode-note">Los símbolos son puntos representativos geocodificados, no áreas oficiales de evacuación.</p>
+                  <p className="geocode-note">
+                    Los símbolos son puntos representativos geocodificados, no áreas oficiales de evacuación.
+                    {displayRegion.unmappedLocations?.length
+                      ? ` Sin ubicación: ${displayRegion.unmappedLocations.join(", ")}.`
+                      : ""}
+                  </p>
                   <div className="location-list">
                     {visiblePoints.map((point) => (
                       <button key={point.id} onClick={() => focusPoint(point)}>

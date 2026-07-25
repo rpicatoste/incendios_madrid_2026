@@ -34,6 +34,7 @@ export type RegionData = {
   updatedAt: string;
   points: SituationPoint[];
   fires: FireIncident[];
+  unmappedLocations?: string[];
 };
 
 const MADRID_SOURCE =

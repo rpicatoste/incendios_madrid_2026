@@ -1,8 +1,11 @@
-import { defaultRegionData } from "../../../lib/region-data";
+import { buildLiveRegion } from "../../../lib/live-region";
+import { getMadridStatus } from "../../../lib/madrid-status";
 
 export async function GET() {
+  const status = await getMadridStatus();
+  const region = await buildLiveRegion(status);
   return Response.json({
-    ...defaultRegionData,
+    ...region,
     fetchedAt: new Date().toISOString(),
   }, {
     headers: {
