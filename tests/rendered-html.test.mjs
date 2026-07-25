@@ -63,6 +63,24 @@ test("rejects public mutations and hides the internal snapshot capture route", a
   });
   assert.equal(snapshotPost.status, 404);
 
+  const analyticsPost = await request("/api/analytics", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: "not-the-private-key" }),
+  });
+  assert.equal(analyticsPost.status, 404);
+
+  const analyticsGet = await request("/api/analytics");
+  assert.equal(analyticsGet.status, 404);
+
+  const visitorsPage = await request("/visitas", {
+    headers: { accept: "text/html" },
+  });
+  assert.equal(visitorsPage.status, 200);
+  const visitorsHtml = await visitorsPage.text();
+  assert.match(visitorsHtml, /PANEL PRIVADO/);
+  assert.doesNotMatch(visitorsHtml, /Personas hoy/);
+
   const unknown = await request("/admin");
   assert.equal(unknown.status, 404);
 
@@ -105,6 +123,13 @@ test("keeps upstream access fixed and the production listener private", async ()
     readFile(new URL("../ops/fnmt-components.pem", import.meta.url), "utf8"),
   ]);
 
+  const [analyticsLib, analyticsRoute, visitRoute, visitorsClient] = await Promise.all([
+    readFile(new URL("../lib/visitor-analytics.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/analytics/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/analytics/visit/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/visitas/VisitorAnalytics.tsx", import.meta.url), "utf8"),
+  ]);
+
   assert.match(airRoute, /const ICA_URL = "https:\/\/ica\.miteco\.es\/datos\/ica-ultima-hora\.csv"/);
   assert.equal(["child_process", "execFile", "spawn("].some((term) => airRoute.includes(term)), false);
   assert.equal(airRoute.includes('timeZone: "Europe/Madrid"'), true);
@@ -128,6 +153,21 @@ test("keeps upstream access fixed and the production listener private", async ()
     createHash("sha256").update(fnmtCertificate).digest("hex"),
     "74a26ccb0f9ca1f7cdcbd2d4d4a58923c57165047d809b6b52cac50541a968ad",
   );
+  assert.match(analyticsLib, /createHmac\("sha256", configuredToken\)/);
+  assert.match(analyticsLib, /RETENTION_DAYS = 90/);
+  assert.match(analyticsLib, /SESSION_WINDOW_MS = 30/);
+  assert.match(analyticsLib, /request\.headers\.get\("dnt"\)/);
+  assert.match(analyticsLib, /request\.headers\.get\("sec-gpc"\)/);
+  assert.match(analyticsLib, /mode: 0o600/);
+  assert.match(analyticsLib, /timingSafeEqual/);
+  assert.doesNotMatch(analyticsLib, /ipAddress\s*:/);
+  assert.doesNotMatch(analyticsLib, /userAgent:\s*userAgent/);
+  assert.match(analyticsRoute, /declaredLength > 512/);
+  assert.match(analyticsRoute, /analyticsTokenIsValid/);
+  assert.match(visitRoute, /declaredLength > 16/);
+  assert.match(visitRoute, /recordVisitor\(request\)/);
+  assert.match(visitorsClient, /La clave no se guarda en el navegador/);
+  assert.doesNotMatch(visitorsClient, /localStorage/);
   assert.match(snapshotRoute, /timingSafeEqual/);
   assert.match(snapshotRoute, /declaredLength > 128/);
   assert.match(snapshotRoute, /captureFromServer\(request, capturedAt\)/);
@@ -154,6 +194,7 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(copernicusMap, /rapidmapping\.emergency\.copernicus\.eu/);
   assert.match(copernicusMap, /DATA_HOST = "rapidmapping-viewer\.s3\.eu-west-1\.amazonaws\.com"/);
   assert.match(worker, /\["GET", "HEAD"\]/);
+  assert.match(worker, /\["\/api\/analytics", "\/api\/analytics\/visit"\]/);
   assert.match(service, /--hostname 127\.0\.0\.1/);
   assert.match(service, /NODE_EXTRA_CA_CERTS=.*\/ops\/fnmt-components\.pem/);
   assert.doesNotMatch(service, /--hostname 0\.0\.0\.0/);
@@ -165,6 +206,9 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(dashboard, /layerSourceDate/);
   assert.match(dashboard, /!hasFrozenSatellite && isLive/);
   assert.match(dashboard, /\[smokeVisible, setSmokeVisible\] = useState\(false\)/);
+  assert.match(dashboard, /foco-visitor-recorded-v1/);
+  assert.match(dashboard, /\/api\/analytics\/visit/);
+  assert.match(dashboard, /globalPrivacyControl/);
   assert.equal(dashboard.includes("últimas válidas"), true);
   assert.doesNotMatch(dashboard, /L\.marker\(\[station\.lat, station\.lon\]/);
   assert.match(dashboard, /pane: "foco-user-location"/);

@@ -321,6 +321,29 @@ export default function Dashboard() {
     [displayRegion.points],
   );
 
+  useEffect(() => {
+    const privacyNavigator = navigator as Navigator & { globalPrivacyControl?: boolean };
+    if (navigator.doNotTrack === "1" || privacyNavigator.globalPrivacyControl) return;
+    const sessionKey = "foco-visitor-recorded-v1";
+    try {
+      if (sessionStorage.getItem(sessionKey)) return;
+      sessionStorage.setItem(sessionKey, "1");
+      void fetch("/api/analytics/visit", {
+        method: "POST",
+        credentials: "same-origin",
+        keepalive: true,
+      })
+        .then((response) => {
+          if (!response.ok) sessionStorage.removeItem(sessionKey);
+        })
+        .catch(() => {
+          sessionStorage.removeItem(sessionKey);
+        });
+    } catch {
+      // La aplicación sigue funcionando si el navegador bloquea el almacenamiento de sesión.
+    }
+  }, []);
+
   const requestForecast = useCallback(async (
     lat: number,
     lon: number,

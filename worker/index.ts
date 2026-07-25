@@ -64,7 +64,10 @@ const worker = {
     const url = new URL(request.url);
     const isSnapshotCapture =
       url.pathname === "/api/snapshots" && request.method === "POST";
-    if (!["GET", "HEAD"].includes(request.method) && !isSnapshotCapture) {
+    const isAnalyticsPost =
+      request.method === "POST" &&
+      ["/api/analytics", "/api/analytics/visit"].includes(url.pathname);
+    if (!["GET", "HEAD"].includes(request.method) && !isSnapshotCapture && !isAnalyticsPost) {
       return secureResponse(
         Response.json({ error: "Method not allowed" }, { status: 405 }),
       );

@@ -54,6 +54,10 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
 - Cada snapshot congela por valor el estado, los puntos regionales, los
   sensores de aire, los rásteres satelitales y el GeoJSON de Copernicus.
   Un snapshot histórico sin copia congelada no consulta capas remotas después.
+- Analítica propia y privada en `/visitas`: cuenta sesiones aproximadas sin
+  cookies, respeta DNT/GPC y conserva solo HMAC diarios y agregados durante 90
+  días. La clave se guarda fuera de Git en `data/analytics-access.txt`, modo
+  `0600`, y nunca se enlaza desde la interfaz pública.
 
 ## Fuentes y actualización
 
@@ -69,16 +73,22 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
   humo/aerosoles VIIRS.
 - MITECO: sensores de calidad del aire; caché y refresco cada quince minutos.
   La hora de observación se muestra en horario peninsular, se avisa si supera
-  tres horas de antigüedad y, si la fuente falla, se conserva la última lectura
-  válida, persistida mediante escritura atómica en `data/cache/air-quality.json`.
-  Los refrescos simultáneos comparten un bloqueo corto. Producción carga la
-  autoridad intermedia pública de FNMT desde `ops/fnmt-components.pem`; la
+  tres horas de antigüedad y, si la fuente deja índices vacíos, se conservan
+  durante un máximo de doce horas las últimas lecturas válidas. La caché general
+  y `data/cache/air-quality-last-valid.json` se escriben de forma atómica con
+  modo `0600`. Los refrescos simultáneos comparten un bloqueo corto. Producción
+  carga la autoridad intermedia pública de FNMT desde `ops/fnmt-components.pem`; la
   validación TLS nunca se desactiva.
 - Open-Meteo: previsión puntual solicitada por el navegador; se renueva cada
   quince minutos mientras el panel del punto permanece abierto.
 - El navegador renueva estado cada dos minutos y región, noticias, manifiesto
   satelital y lista de snapshots cada cinco minutos; también refresca al volver
   a primer plano o recuperar conexión.
+
+- Analítica: el navegador registra como máximo una señal por sesión. El servidor
+  agrupa ventanas de treinta minutos y países aproximados, sin persistir IP,
+  agente de navegador ni páginas. El panel consulta por POST con comparación de
+  clave en tiempo constante y no guarda la clave en el navegador.
 
 ## Flujo seguro de cambios
 
@@ -92,9 +102,12 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
 7. Si cambia una captura, reiniciar `foco-snapshotter.service` para forzar una
    lectura y validar manifiesto, dimensiones y errores.
 
-La superficie pública debe seguir siendo de solo lectura. `/api/snapshots`
-acepta POST únicamente con el token interno y responde 404 a visitantes. Las
-URLs de fuentes se mantienen fijadas en el servidor para evitar SSRF.
+La superficie pública debe seguir siendo de solo lectura salvo la señal vacía y
+anónima de `/api/analytics/visit`. `/api/snapshots` acepta POST únicamente con el
+token interno y responde 404 a visitantes. `/api/analytics` responde 404 sin su
+clave privada; su GET no expone datos. Los POST permitidos están enumerados por
+ruta exacta en `worker/index.ts`. Las URLs de fuentes se mantienen fijadas en el
+servidor para evitar SSRF.
 
 ## Retomar con Codex CLI
 
