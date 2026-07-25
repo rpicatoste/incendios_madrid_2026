@@ -261,7 +261,7 @@ export default function Dashboard() {
   const [heatVisible, setHeatVisible] = useState(true);
   const [burntVisible, setBurntVisible] = useState(true);
   const [frontVisible, setFrontVisible] = useState(true);
-  const [smokeVisible, setSmokeVisible] = useState(true);
+  const [smokeVisible, setSmokeVisible] = useState(false);
   const [fireAreasVisible, setFireAreasVisible] = useState(true);
   const [userVisible, setUserVisible] = useState(true);
   const [selectedPoint, setSelectedPoint] = useState<{ lat: number; lon: number; label: string } | null>(null);

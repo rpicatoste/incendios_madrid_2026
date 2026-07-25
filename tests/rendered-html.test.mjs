@@ -163,6 +163,7 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(dashboard, /NASA GIBS · calor VIIRS/);
   assert.match(dashboard, /layerSourceDate/);
   assert.match(dashboard, /!hasFrozenSatellite && isLive/);
+  assert.match(dashboard, /\[smokeVisible, setSmokeVisible\] = useState\(false\)/);
   assert.equal(dashboard.includes("últimas válidas"), true);
   assert.doesNotMatch(dashboard, /L\.marker\(\[station\.lat, station\.lon\]/);
   assert.match(dashboard, /pane: "foco-user-location"/);
