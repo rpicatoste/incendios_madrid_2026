@@ -247,6 +247,31 @@ export default function Dashboard() {
     }
   }, []);
 
+  const updateUserMarker = useCallback((latitude: number, longitude: number) => {
+    if (!mapRef.current || !window.L) return;
+    if (userMarkerRef.current) {
+      userMarkerRef.current.setLatLng([latitude, longitude]);
+      userMarkerRef.current.addTo(mapRef.current);
+      return;
+    }
+
+    const icon = window.L.divIcon({
+      className: "foco-map-icon",
+      html: '<span class="user-marker" aria-hidden="true"><span></span></span>',
+      iconSize: [30, 30],
+      iconAnchor: [15, 15],
+    });
+    userMarkerRef.current = window.L.marker([latitude, longitude], {
+      icon,
+      pane: "foco-user-location",
+      interactive: false,
+      keyboard: false,
+      zIndexOffset: 2000,
+    })
+      .bindPopup('<div class="foco-popup"><strong>Tu posición</strong><p>El mapa se ha centrado aquí.</p></div>')
+      .addTo(mapRef.current);
+  }, []);
+
   useEffect(() => {
     let active = true;
     const refreshLiveData = async () => {
@@ -320,6 +345,9 @@ export default function Dashboard() {
         }).addTo(map);
         L.control.zoom({ position: "bottomright" }).addTo(map);
         canvasRendererRef.current = L.canvas({ padding: 0.3, tolerance: 8 });
+        map.createPane("foco-user-location");
+        map.getPane("foco-user-location").style.zIndex = "675";
+        map.getPane("foco-user-location").style.pointerEvents = "none";
 
         situationLayerRef.current = L.layerGroup().addTo(map);
         fireAreaLayerRef.current = L.layerGroup().addTo(map);
@@ -380,15 +408,7 @@ export default function Dashboard() {
             (position) => {
               const { latitude, longitude } = position.coords;
               map.setView([latitude, longitude], 10);
-              const icon = L.divIcon({
-                className: "foco-map-icon",
-                html: '<span class="user-marker"><span></span></span>',
-                iconSize: [28, 28],
-                iconAnchor: [14, 14],
-              });
-              userMarkerRef.current = L.marker([latitude, longitude], { icon })
-                .bindPopup('<div class="foco-popup"><strong>Tu posición</strong><p>El mapa se ha centrado aquí.</p></div>')
-                .addTo(map);
+              updateUserMarker(latitude, longitude);
               setLocationState("Centrado en tu posición");
             },
             () => setLocationState("Ubicación no disponible · vista Zona Centro"),
@@ -407,7 +427,7 @@ export default function Dashboard() {
         mapRef.current = null;
       }
     };
-  }, [requestForecast]);
+  }, [requestForecast, updateUserMarker]);
 
   useEffect(() => {
     if (!mapReady || !situationLayerRef.current || !window.L) return;
@@ -529,10 +549,7 @@ export default function Dashboard() {
       (position) => {
         const { latitude, longitude } = position.coords;
         mapRef.current.setView([latitude, longitude], 12);
-        if (userMarkerRef.current) {
-          userMarkerRef.current.setLatLng([latitude, longitude]);
-          userMarkerRef.current.addTo(mapRef.current);
-        }
+        updateUserMarker(latitude, longitude);
         setLocationState("Centrado en tu posición");
       },
       () => setLocationState("No se pudo acceder a tu posición"),
