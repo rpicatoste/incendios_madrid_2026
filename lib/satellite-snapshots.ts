@@ -13,7 +13,8 @@ const RASTER_DIMENSIONS: Record<RasterLayer, { width: number; height: number }> 
   // El área quemada necesita conservar el contorno al ampliar. 4096 px equivale
   // aproximadamente a cuatro veces el detalle horizontal de la antigua copia.
   burnt: { width: 4096, height: 2731 },
-  heat: { width: 2048, height: 1365 },
+  // El WMS de hotspots devuelve HTTP 500 por encima de su tamaño operativo.
+  heat: { width: 1600, height: 1067 },
   // El producto de aerosoles tiene una resolución nativa bastante menor.
   smoke: { width: 1600, height: 1067 },
 };
@@ -85,6 +86,15 @@ const atomicWrite = async (path: string, contents: Uint8Array | string) => {
   await rename(temporaryPath, path);
 };
 
+const readPngDimensions = (bytes: Uint8Array) => {
+  if (bytes.length < 24) return undefined;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return {
+    width: view.getUint32(16),
+    height: view.getUint32(20),
+  };
+};
+
 const capturePng = async (
   hourId: string,
   layer: RasterLayer,
@@ -148,14 +158,16 @@ export const captureSatelliteSnapshot = async (
     errors[layer] = result.reason instanceof Error ? result.reason.message : "Sin captura";
     if (!previous?.layers[layer]) return;
     try {
-      await readFile(layerPath(storageId, layer));
+      const existingBytes = await readFile(layerPath(storageId, layer));
       layers[layer] = true;
       staleLayers[layer] = true;
       layerCapturedAt[layer] =
         previous.layerCapturedAt?.[layer] || previous.capturedAt;
       if (layer !== "copernicus") {
         rasterDimensions[layer] =
-          previous.rasterDimensions?.[layer] || RASTER_DIMENSIONS[layer];
+          readPngDimensions(existingBytes) ||
+          previous.rasterDimensions?.[layer] ||
+          RASTER_DIMENSIONS[layer];
       }
     } catch {
       // No existe una copia anterior válida que se pueda conservar.
