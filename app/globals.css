@@ -1138,13 +1138,24 @@ button {
   gap: 7px;
 }
 
-.hour-card {
-  flex: 0 0 148px;
-  min-width: 148px;
+.hour-card,
+.forecast-day-card {
   background: white;
   border: 1px solid #dce4df;
   border-radius: 9px;
   padding: 8px 10px;
+}
+
+.hour-card {
+  flex: 0 0 103px;
+  min-width: 103px;
+}
+
+.forecast-day-card {
+  flex: 0 0 70px;
+  min-width: 70px;
+  background: #edf2ed;
+  border-color: #ced8d1;
 }
 
 .hour-card.now {
@@ -1169,6 +1180,7 @@ button {
   padding-bottom: 5px;
   margin-bottom: 4px;
   border-bottom: 1px solid #e0e6e2;
+  min-height: 19px;
 }
 
 .now .hour-top {
@@ -1177,6 +1189,7 @@ button {
 
 .hour-top b {
   font-size: 11px;
+  text-transform: capitalize;
 }
 
 .hour-top small {
@@ -1202,6 +1215,19 @@ button {
   min-height: 19px;
 }
 
+.hour-card .weather-metric {
+  justify-content: center;
+}
+
+.forecast-day-card .weather-metric {
+  justify-content: flex-start;
+}
+
+.forecast-day-card .weather-metric small {
+  color: #445759;
+  font-weight: 750;
+}
+
 .weather-metric small,
 .weather-metric strong {
   line-height: 1.12;
@@ -1217,10 +1243,21 @@ button {
   color: #9bb0b1;
 }
 
+.now .weather-metric em {
+  color: #aebfc0;
+}
+
 .weather-metric strong {
   margin: 0;
   font-size: 10px;
   text-align: right;
+}
+
+.hour-card .weather-metric strong {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
 }
 
 .weather-metric em {
@@ -1592,8 +1629,13 @@ button {
   }
 
   .hour-card {
-    flex-basis: 142px;
-    min-width: 142px;
+    flex-basis: 98px;
+    min-width: 98px;
+  }
+
+  .forecast-day-card {
+    flex-basis: 67px;
+    min-width: 67px;
   }
 
   .leaflet-tile-pane {

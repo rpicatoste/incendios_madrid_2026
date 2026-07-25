@@ -86,6 +86,8 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.doesNotMatch(dashboard, /L\.marker\(\[station\.lat, station\.lon\]/);
   assert.match(dashboard, /pane: "foco-user-location"/);
   assert.match(dashboard, /zIndexOffset: 2000/);
+  assert.match(dashboard, /className="forecast-day-card"/);
+  assert.match(dashboard, /startsDay/);
   assert.match(css, /\.topbar\s*\{\s*height:\s*46px;/);
   assert.match(css, /\.forecast-panel\.open\s*\{\s*height:\s*176px;/);
   assert.doesNotMatch(css, /\.map-legend\.forecast-open\s*\{[^}]*opacity:\s*0/s);

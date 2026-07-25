@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   defaultRegionData,
   type RegionData,
@@ -839,27 +839,41 @@ export default function Dashboard() {
               {forecastState === "ready" &&
                 forecast.map((hour, index) => {
                   const date = new Date(hour.time);
+                  const dayKey = date.toLocaleDateString("es-ES");
+                  const previousDate = index > 0 ? new Date(forecast[index - 1].time) : null;
+                  const startsDay =
+                    !previousDate || previousDate.toLocaleDateString("es-ES") !== dayKey;
                   return (
-                    <article className={`hour-card ${index === 0 ? "now" : ""}`} key={hour.time}>
-                      <div className="hour-top">
-                        <b>{index === 0 ? "Ahora" : date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}</b>
-                        <small>{date.toLocaleDateString("es-ES", { weekday: "short", day: "numeric" })}</small>
-                      </div>
-                      <div className="weather-metrics">
-                        <div className="weather-metric sun">
-                          <small>Sol</small>
-                          <strong>{describeSun(hour)}</strong>
+                    <Fragment key={hour.time}>
+                      {startsDay && (
+                        <div className="forecast-day-card">
+                          <div className="hour-top">
+                            <b>{date.toLocaleDateString("es-ES", { weekday: "short" }).replace(".", "")} {date.getDate()}</b>
+                          </div>
+                          <div className="weather-metrics">
+                            <div className="weather-metric"><small>Sol</small></div>
+                            <div className="weather-metric"><small>Viento</small></div>
+                            <div className="weather-metric"><small>Lluvia</small></div>
+                          </div>
                         </div>
-                        <div className="weather-metric wind">
-                          <small>Viento {compass(hour.windDirection)}</small>
-                          <strong>{hour.wind} km/h</strong>
+                      )}
+                      <article className={`hour-card ${index === 0 ? "now" : ""}`}>
+                        <div className="hour-top">
+                          <b>{index === 0 ? "Ahora" : date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}</b>
                         </div>
-                        <div className="weather-metric rain">
-                          <small>Lluvia</small>
-                          <strong>{hour.rainProbability}% <em>{hour.rain.toFixed(1)} mm</em></strong>
+                        <div className="weather-metrics">
+                          <div className="weather-metric sun">
+                            <strong>{describeSun(hour)}</strong>
+                          </div>
+                          <div className="weather-metric wind">
+                            <strong>{compass(hour.windDirection)} · {hour.wind} km/h</strong>
+                          </div>
+                          <div className="weather-metric rain">
+                            <strong>{hour.rainProbability}% <em>· {hour.rain.toFixed(1)} mm</em></strong>
+                          </div>
                         </div>
-                      </div>
-                    </article>
+                      </article>
+                    </Fragment>
                   );
                 })}
             </div>
