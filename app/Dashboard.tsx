@@ -189,6 +189,7 @@ export default function Dashboard() {
   const copernicusBurntLayerRef = useRef<any>(null);
   const copernicusFrontLayerRef = useRef<any>(null);
   const userMarkerRef = useRef<any>(null);
+  const forecastMarkerRef = useRef<any>(null);
   const canvasRendererRef = useRef<any>(null);
   const forecastRequestRef = useRef<AbortController | null>(null);
   const forecastCacheRef = useRef<Map<string, ForecastHour[]>>(new Map());
@@ -459,6 +460,9 @@ export default function Dashboard() {
         map.createPane("foco-user-location");
         map.getPane("foco-user-location").style.zIndex = "675";
         map.getPane("foco-user-location").style.pointerEvents = "none";
+        map.createPane("foco-forecast-point");
+        map.getPane("foco-forecast-point").style.zIndex = "680";
+        map.getPane("foco-forecast-point").style.pointerEvents = "none";
 
         situationLayerRef.current = L.layerGroup().addTo(map);
         fireAreaLayerRef.current = L.layerGroup().addTo(map);
@@ -539,6 +543,27 @@ export default function Dashboard() {
       }
     };
   }, [requestForecast, updateUserMarker]);
+
+  useEffect(() => {
+    if (!mapReady || !mapRef.current || !window.L || !selectedPoint) return;
+    const latLng: [number, number] = [selectedPoint.lat, selectedPoint.lon];
+    if (forecastMarkerRef.current) {
+      forecastMarkerRef.current.setLatLng(latLng).addTo(mapRef.current);
+      return;
+    }
+    forecastMarkerRef.current = window.L.marker(latLng, {
+      icon: window.L.divIcon({
+        className: "foco-map-icon",
+        html: '<span class="forecast-point-marker" aria-hidden="true"><i></i></span>',
+        iconSize: [30, 30],
+        iconAnchor: [15, 15],
+      }),
+      pane: "foco-forecast-point",
+      interactive: false,
+      keyboard: false,
+      zIndexOffset: 2200,
+    }).addTo(mapRef.current);
+  }, [mapReady, selectedPoint]);
 
   useEffect(() => {
     let active = true;
@@ -1306,7 +1331,9 @@ export default function Dashboard() {
             <div className="forecast-heading">
               <div>
                 <div className="forecast-title-row">
-                  <span className="eyebrow">PREVISIÓN DEL PUNTO</span>
+                  <span className="eyebrow">
+                    PREVISIÓN DEL PUNTO <i className="forecast-title-pin" aria-hidden="true">⌖</i>
+                  </span>
                   {selectedPoint && (
                     <small>{selectedPoint.lat.toFixed(4)}, {selectedPoint.lon.toFixed(4)} · Open‑Meteo</small>
                   )}
@@ -1358,16 +1385,18 @@ export default function Dashboard() {
                             </strong>
                           </div>
                           <div className="weather-metric wind">
-                            <strong aria-label={`Viento ${compass(hour.windDirection)}, ${hour.wind} kilómetros por hora`}>
-                              {compass(hour.windDirection)}
-                              <span
-                                className="wind-arrow"
-                                aria-hidden="true"
-                                style={{ transform: `rotate(${hour.windDirection}deg)` }}
-                              >
-                                ↑
+                            <strong className="wind-stack" aria-label={`Viento ${compass(hour.windDirection)}, ${hour.wind} kilómetros por hora`}>
+                              <span className="wind-direction">
+                                {compass(hour.windDirection)}
+                                <i
+                                  className="wind-arrow"
+                                  aria-hidden="true"
+                                  style={{ transform: `rotate(${hour.windDirection}deg)` }}
+                                >
+                                  ↑
+                                </i>
                               </span>
-                              {hour.wind} km/h
+                              <span className="wind-speed">{hour.wind} km/h</span>
                             </strong>
                           </div>
                           <div className="weather-metric rain">

@@ -919,6 +919,46 @@ button {
   box-shadow: inset 0 0 0 1px rgba(0, 58, 133, .22);
 }
 
+.forecast-point-marker {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  display: block;
+  border: 2px solid white;
+  border-radius: 50%;
+  background: rgba(13, 48, 50, .82);
+  box-shadow: 0 0 0 2px #ff654f, 0 4px 12px rgba(19, 46, 48, .32);
+}
+
+.forecast-point-marker::before,
+.forecast-point-marker::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  background: #ff654f;
+}
+
+.forecast-point-marker::before {
+  width: 2px;
+  height: 34px;
+  left: 10px;
+  top: -6px;
+}
+
+.forecast-point-marker::after {
+  width: 34px;
+  height: 2px;
+  left: -6px;
+  top: 10px;
+}
+
+.forecast-point-marker i {
+  position: absolute;
+  inset: 7px;
+  border-radius: 50%;
+  background: #ff654f;
+}
+
 .map-loading,
 .map-error {
   position: absolute;
@@ -1272,6 +1312,17 @@ button {
   gap: 10px;
 }
 
+.forecast-title-pin {
+  display: inline-block;
+  margin-left: 2px;
+  color: #e84f3a;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  font-style: normal;
+  line-height: 0;
+  vertical-align: -1px;
+}
+
 .forecast-title-row small {
   min-width: 0;
   overflow: hidden;
@@ -1325,13 +1376,13 @@ button {
 }
 
 .hour-card {
-  flex: 0 0 103px;
-  min-width: 103px;
+  flex: 0 0 92px;
+  min-width: 92px;
 }
 
 .forecast-day-card {
-  flex: 0 0 70px;
-  min-width: 70px;
+  flex: 0 0 64px;
+  min-width: 64px;
   background: #edf2ed;
   border-color: #ced8d1;
 }
@@ -1450,6 +1501,27 @@ button {
   align-items: center;
   justify-content: center;
   gap: 4px;
+}
+
+.weather-metric.wind .wind-stack {
+  flex-direction: column;
+  gap: 0;
+  line-height: 1;
+  overflow: visible;
+}
+
+.wind-direction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 12px;
+}
+
+.wind-speed {
+  display: block;
+  font-size: 9px;
+  line-height: 1;
 }
 
 .wind-arrow {
@@ -1834,13 +1906,13 @@ button {
   }
 
   .hour-card {
-    flex-basis: 98px;
-    min-width: 98px;
+    flex-basis: 88px;
+    min-width: 88px;
   }
 
   .forecast-day-card {
-    flex-basis: 67px;
-    min-width: 67px;
+    flex-basis: 62px;
+    min-width: 62px;
   }
 
   .leaflet-tile-pane {

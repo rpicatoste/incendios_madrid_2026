@@ -114,9 +114,14 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.doesNotMatch(dashboard, /L\.marker\(\[station\.lat, station\.lon\]/);
   assert.match(dashboard, /pane: "foco-user-location"/);
   assert.match(dashboard, /zIndexOffset: 2000/);
+  assert.match(dashboard, /pane: "foco-forecast-point"/);
+  assert.match(dashboard, /class="forecast-point-marker"/);
+  assert.match(dashboard, /className="forecast-title-pin"/);
   assert.match(dashboard, /className="forecast-day-card"/);
   assert.match(dashboard, /startsDay/);
   assert.match(dashboard, /className="wind-arrow"/);
+  assert.match(dashboard, /className="wind-stack"/);
+  assert.match(dashboard, /className="wind-speed"/);
   assert.match(dashboard, /rotate\(\$\{hour\.windDirection\}deg\)/);
   assert.match(dashboard, /weather_code,is_day/);
   assert.match(dashboard, /className="sky-symbol"/);
