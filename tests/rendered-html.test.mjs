@@ -111,10 +111,18 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.equal(airRoute.includes("sourceOk: true"), true);
   assert.equal(airRoute.includes("responseFromCache(cached, true)"), true);
   assert.equal(airRoute.includes("AbortSignal.timeout(10000)"), true);
-  assert.equal(airRoute.includes("delayed: observedAt"), true);
+  assert.equal(airRoute.includes("observationIsDelayed"), true);
   assert.equal(airRoute.includes("process.env.FOCO_DATA_DIR"), true);
   assert.equal(airRoute.includes("acquireRefreshLock"), true);
   assert.equal(airRoute.includes("writeDiskCache"), true);
+  assert.equal(airRoute.includes("CACHE_SCHEMA_VERSION = 2"), true);
+  assert.equal(airRoute.includes("air-quality-last-valid.json"), true);
+  assert.equal(airRoute.includes("readSnapshotFallbackStations"), true);
+  assert.equal(airRoute.includes("LAST_VALID_MAX_AGE_MS = 12"), true);
+  assert.equal(airRoute.includes("carriedForward: true"), true);
+  assert.equal(airRoute.includes("MIN_CURRENT_COVERAGE"), true);
+  assert.equal(airRoute.includes("coverage:"), true);
+  assert.equal(airRoute.includes('rawIndex.trim() !== ""'), true);
   assert.doesNotMatch(airRoute, /rejectUnauthorized\s*:\s*false/);
   assert.equal(
     createHash("sha256").update(fnmtCertificate).digest("hex"),
@@ -141,6 +149,10 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(service, /NODE_EXTRA_CA_CERTS=.*\/ops\/fnmt-components\.pem/);
   assert.doesNotMatch(service, /--hostname 0\.0\.0\.0/);
   assert.match(dashboard, /L\.circleMarker\(\[station\.lat, station\.lon\]/);
+  assert.equal(dashboard.includes("station.carriedForward"), true);
+  assert.match(dashboard, /última lectura válida conservada/);
+  assert.equal(dashboard.includes('dashArray: station.carriedForward ? "4 3"'), true);
+  assert.equal(dashboard.includes("últimas válidas"), true);
   assert.doesNotMatch(dashboard, /L\.marker\(\[station\.lat, station\.lon\]/);
   assert.match(dashboard, /pane: "foco-user-location"/);
   assert.match(dashboard, /zIndexOffset: 2000/);

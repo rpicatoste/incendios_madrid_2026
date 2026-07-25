@@ -27,6 +27,7 @@ type AirStation = {
   incomplete?: boolean;
   observedAt?: string | null;
   delayed?: boolean;
+  carriedForward?: boolean;
   hour: string | null;
 };
 
@@ -274,6 +275,12 @@ export default function Dashboard() {
   const selectedSnapshot = snapshotIndex === null ? null : snapshots[snapshotIndex] || null;
   const displayStatus = selectedSnapshot?.data.status || liveStatus;
   const displayAirStations = selectedSnapshot?.data.airStations || liveAirStations;
+  const currentAirStationCount = displayAirStations.filter(
+    (station) => typeof station.index === "number" && station.index > 0 && !station.carriedForward,
+  ).length;
+  const recoveredAirStationCount = displayAirStations.filter(
+    (station) => station.carriedForward,
+  ).length;
   const displayRegion = selectedSnapshot?.data.region || liveRegion;
   const displayFireMap = cachedFireMap;
   const layerTime = selectedSnapshot?.data.layerTime || new Date().toISOString();
@@ -928,17 +935,21 @@ export default function Dashboard() {
     const L = window.L;
     airLayerRef.current.clearLayers();
     displayAirStations.forEach((station) => {
+      const recoveryNote = station.carriedForward
+        ? " · MITECO sin índice nuevo; última lectura válida conservada"
+        : "";
       L.circleMarker([station.lat, station.lon], {
         renderer: canvasRendererRef.current,
         radius: 10,
-        color: "#ffffff",
+        color: station.carriedForward ? "#657477" : "#ffffff",
+        dashArray: station.carriedForward ? "4 3" : undefined,
         weight: 3,
         fillColor: station.color,
-        fillOpacity: 0.88,
+        fillOpacity: station.carriedForward ? 0.58 : 0.88,
         bubblingMouseEvents: false,
       })
         .bindPopup(
-          `<div class="foco-popup"><span class="popup-kicker" style="color:${escapeHtml(station.color)}">ICA ${station.index || "—"} · ${escapeHtml(station.label)}</span><strong>${escapeHtml(station.name)}</strong><p>Contaminante dominante: ${escapeHtml(station.pollutant || "sin dato")}${station.incomplete ? " · índice con datos parciales" : ""}</p><small>${escapeHtml(station.hour || "Sin lectura reciente")}${station.delayed ? " · fuente con retraso" : ""} · MITECO, dato provisional</small></div>`,
+          `<div class="foco-popup"><span class="popup-kicker" style="color:${escapeHtml(station.color)}">ICA ${station.index || "—"} · ${escapeHtml(station.label)}</span><strong>${escapeHtml(station.name)}</strong><p>Contaminante dominante: ${escapeHtml(station.pollutant || "sin dato")}${station.incomplete ? " · índice con datos parciales" : ""}</p><small>${escapeHtml(station.hour || "Sin lectura reciente")}${station.delayed ? " · fuente con retraso" : ""}${recoveryNote} · MITECO, dato provisional</small></div>`,
           { closeButton: false, offset: [0, -10] },
         )
         .addTo(airLayerRef.current);
@@ -1180,7 +1191,9 @@ export default function Dashboard() {
       icon: "ICA",
       className: "source-icon--air",
       title: "MITECO · calidad del aire",
-      detail: `${displayAirStations.length} estaciones en la vista`,
+      detail: recoveredAirStationCount
+        ? `${currentAirStationCount} lecturas actuales · ${recoveredAirStationCount} últimas válidas`
+        : `${displayAirStations.length} estaciones en la vista`,
       url: MITECO_ICA_URL,
       read: selectedSnapshot?.capturedAt || airSourceReadAt,
       ok: displayAirStations.length > 0,

@@ -3,10 +3,16 @@ import { dirname, join } from "node:path";
 
 const ICA_URL = "https://ica.miteco.es/datos/ica-ultima-hora.csv";
 const CACHE_TTL_MS = 15 * 60 * 1000;
+const CACHE_SCHEMA_VERSION = 2;
+const LAST_VALID_SCHEMA_VERSION = 1;
+const LAST_VALID_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+const MIN_CURRENT_COVERAGE = 0.5;
 const LOCK_STALE_MS = 30 * 1000;
 const LOCK_WAIT_MS = 12 * 1000;
 const dataDirectory = process.env.FOCO_DATA_DIR || join(process.cwd(), "data");
 const cacheFile = join(dataDirectory, "cache", "air-quality.json");
+const lastValidFile = join(dataDirectory, "cache", "air-quality-last-valid.json");
+const snapshotsFile = join(dataDirectory, "snapshots.json");
 const lockDirectory = join(dataDirectory, "cache", ".air-quality.lock");
 const CACHE_HEADERS = {
   "Cache-Control": "public, max-age=900, stale-while-revalidate=3600",
@@ -15,9 +21,42 @@ const ERROR_CACHE_HEADERS = {
   "Cache-Control": "public, max-age=60, stale-while-revalidate=300",
 };
 
+type AirStation = {
+  id: number;
+  name: string;
+  type: string;
+  lat: number;
+  lon: number;
+  active: boolean;
+  label: string;
+  color: string;
+  pollutant: string | null;
+  value: null;
+  index: number;
+  incomplete: boolean;
+  hour: string | null;
+  observedAt: string | null;
+  delayed: boolean;
+  upstreamMissing?: boolean;
+  carriedForward?: boolean;
+};
+
 type CacheEntry = {
+  schemaVersion: number;
   expiresAt: number;
   payload: Record<string, unknown>;
+};
+
+type LastValidEntry = {
+  schemaVersion: number;
+  updatedAt: string;
+  stations: AirStation[];
+};
+
+type SnapshotRecord = {
+  data?: {
+    airStations?: AirStation[];
+  };
 };
 
 const errorCode = (error: unknown) =>
@@ -29,6 +68,7 @@ const readDiskCache = async (): Promise<CacheEntry | undefined> => {
   try {
     const parsed = JSON.parse(await readFile(cacheFile, "utf8")) as Partial<CacheEntry>;
     if (
+      parsed.schemaVersion !== CACHE_SCHEMA_VERSION ||
       typeof parsed.expiresAt !== "number" ||
       !parsed.payload ||
       !Array.isArray(parsed.payload.stations)
@@ -51,6 +91,87 @@ const writeDiskCache = async (cache: CacheEntry) => {
   } finally {
     await unlink(temporaryFile).catch(() => {});
   }
+};
+
+const writeLastValidStations = async (stations: AirStation[]) => {
+  await mkdir(dirname(lastValidFile), { recursive: true });
+  const temporaryFile =
+    lastValidFile + "." + process.pid + "." + Date.now() + ".tmp";
+  const entry: LastValidEntry = {
+    schemaVersion: LAST_VALID_SCHEMA_VERSION,
+    updatedAt: new Date().toISOString(),
+    stations,
+  };
+  try {
+    await writeFile(temporaryFile, JSON.stringify(entry), { mode: 0o600 });
+    await rename(temporaryFile, lastValidFile);
+  } finally {
+    await unlink(temporaryFile).catch(() => {});
+  }
+};
+
+const readLastValidStations = async (): Promise<AirStation[]> => {
+  try {
+    const parsed = JSON.parse(
+      await readFile(lastValidFile, "utf8"),
+    ) as Partial<LastValidEntry>;
+    if (
+      parsed.schemaVersion !== LAST_VALID_SCHEMA_VERSION ||
+      !Array.isArray(parsed.stations)
+    ) {
+      return [];
+    }
+    return parsed.stations;
+  } catch {
+    return [];
+  }
+};
+
+const readSnapshotFallbackStations = async (): Promise<AirStation[]> => {
+  try {
+    const snapshots = JSON.parse(
+      await readFile(snapshotsFile, "utf8"),
+    ) as SnapshotRecord[];
+    if (!Array.isArray(snapshots)) return [];
+    return snapshots.flatMap((snapshot) =>
+      Array.isArray(snapshot.data?.airStations)
+        ? snapshot.data.airStations
+        : [],
+    );
+  } catch {
+    return [];
+  }
+};
+
+const observedTime = (station: AirStation) =>
+  station.observedAt ? Date.parse(station.observedAt) : Number.NaN;
+
+const isValidStationReading = (station: AirStation) =>
+  Number.isInteger(station.index) &&
+  station.index >= 1 &&
+  station.index <= 6 &&
+  Number.isFinite(observedTime(station));
+
+const readFallbackStations = async () => {
+  const candidates = (
+    await Promise.all([
+      readLastValidStations(),
+      readSnapshotFallbackStations(),
+    ])
+  ).flat();
+  const latest = new Map<number, AirStation>();
+  const now = Date.now();
+
+  for (const station of candidates) {
+    if (!isValidStationReading(station)) continue;
+    const timestamp = observedTime(station);
+    if (now - timestamp > LAST_VALID_MAX_AGE_MS) continue;
+    const previous = latest.get(station.id);
+    if (!previous || timestamp > observedTime(previous)) {
+      latest.set(station.id, station);
+    }
+  }
+  return latest;
 };
 
 const acquireRefreshLock = async () => {
@@ -126,6 +247,13 @@ const parseCsvLine = (line: string) => {
 
 const parseObservedAt = (value: string) => new Date(value + "Z");
 
+const observationIsDelayed = (value: string | null) => {
+  if (!value) return true;
+  const timestamp = Date.parse(value);
+  return !Number.isFinite(timestamp) ||
+    Date.now() - timestamp > 3 * 60 * 60 * 1000;
+};
+
 const formatObservedAt = (value: string) => {
   const observedAt = parseObservedAt(value);
   if (Number.isNaN(observedAt.getTime())) return value;
@@ -187,14 +315,23 @@ export async function GET() {
       const csv = await response.text();
       const rows = csv.trim().split(/\r?\n/).slice(1);
       const stations = rows
-        .map((line) => {
+        .map((line): AirStation => {
           const [code, name, type, latRaw, lonRaw, activeRaw, observedAt, rawIndex, pollutant] =
             parseCsvLine(line);
           const lat = Number(latRaw);
           const lon = Number(lonRaw);
           const suppliedIndex = Number(rawIndex);
-          const index = suppliedIndex >= 10 ? Math.floor(suppliedIndex / 10) : suppliedIndex;
+          const normalizedIndex =
+            suppliedIndex >= 10 ? Math.floor(suppliedIndex / 10) : suppliedIndex;
+          const hasValidIndex =
+            rawIndex.trim() !== "" &&
+            Number.isInteger(normalizedIndex) &&
+            normalizedIndex >= 1 &&
+            normalizedIndex <= 6;
+          const index = hasValidIndex ? normalizedIndex : 0;
           const status = quality[index] || quality[0];
+          const observation =
+            hasValidIndex && observedAt ? observedAt + "Z" : null;
           return {
             id: Number(code),
             name,
@@ -204,15 +341,14 @@ export async function GET() {
             active: activeRaw === "true",
             label: status.label,
             color: status.color,
-            pollutant: pollutant || null,
+            pollutant: hasValidIndex && pollutant ? pollutant : null,
             value: null,
             index,
-            incomplete: suppliedIndex >= 10,
-            hour: observedAt ? formatObservedAt(observedAt) : null,
-            observedAt: observedAt ? `${observedAt}Z` : null,
-            delayed: observedAt
-              ? Date.now() - parseObservedAt(observedAt).getTime() > 3 * 60 * 60 * 1000
-              : true,
+            incomplete: hasValidIndex && suppliedIndex >= 10,
+            hour: observation ? formatObservedAt(observedAt) : null,
+            observedAt: observation,
+            delayed: observationIsDelayed(observation),
+            upstreamMissing: !hasValidIndex,
           };
         })
         .filter(
@@ -227,15 +363,64 @@ export async function GET() {
         );
       if (!stations.length) throw new Error("National air quality feed returned no stations");
 
+      const fallbackStations = await readFallbackStations();
+      for (const station of stations) {
+        if (!isValidStationReading(station)) continue;
+        const previous = fallbackStations.get(station.id);
+        if (!previous || observedTime(station) > observedTime(previous)) {
+          fallbackStations.set(station.id, station);
+        }
+      }
+
+      const mergedStations = stations.map((station) => {
+        if (isValidStationReading(station)) return station;
+        const fallback = fallbackStations.get(station.id);
+        if (!fallback) return station;
+        return {
+          ...station,
+          label: fallback.label,
+          color: fallback.color,
+          pollutant: fallback.pollutant,
+          index: fallback.index,
+          incomplete: fallback.incomplete,
+          hour: fallback.hour,
+          observedAt: fallback.observedAt,
+          delayed: observationIsDelayed(fallback.observedAt),
+          upstreamMissing: true,
+          carriedForward: true,
+        };
+      });
+      await writeLastValidStations([...fallbackStations.values()]).catch(() => {});
+
+      const reportedStations = stations.filter(isValidStationReading).length;
+      const carriedForwardStations = mergedStations.filter(
+        (station) => station.carriedForward,
+      ).length;
+      const noDataStations =
+        mergedStations.length - reportedStations - carriedForwardStations;
+      const degraded =
+        reportedStations / mergedStations.length < MIN_CURRENT_COVERAGE;
+
       const payload = {
-        stations,
+        stations: mergedStations,
         fetchedAt: new Date().toISOString(),
         source: ICA_URL,
         sourceLabel: "Índice Nacional de Calidad del Aire · MITECO",
         sourceOk: true,
         stale: false,
+        degraded,
+        coverage: {
+          total: mergedStations.length,
+          reported: reportedStations,
+          carriedForward: carriedForwardStations,
+          noData: noDataStations,
+        },
       };
-      const cache = { expiresAt: Date.now() + CACHE_TTL_MS, payload };
+      const cache = {
+        schemaVersion: CACHE_SCHEMA_VERSION,
+        expiresAt: Date.now() + CACHE_TTL_MS,
+        payload,
+      };
       await writeDiskCache(cache).catch(() => {});
       return Response.json(payload, { headers: CACHE_HEADERS });
     } catch {
