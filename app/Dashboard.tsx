@@ -1,16 +1,21 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type * as Leaflet from "leaflet";
 import {
   defaultRegionData,
   type RegionData,
   type SituationPoint,
   type StatusKind,
 } from "../lib/region-data";
+import type {
+  CopernicusFeatureProperties,
+  CopernicusFireMap,
+} from "../lib/copernicus-fire-map";
 
 declare global {
   interface Window {
-    L?: any;
+    L?: typeof import("leaflet");
   }
 }
 
@@ -223,21 +228,21 @@ const formatReadTime = (value?: string) => {
 
 export default function Dashboard() {
   const mapNodeRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<any>(null);
-  const situationLayerRef = useRef<any>(null);
-  const fireAreaLayerRef = useRef<any>(null);
-  const airLayerRef = useRef<any>(null);
-  const heatLayerRef = useRef<any>(null);
-  const burntLayerRef = useRef<any>(null);
-  const smokeLayerRef = useRef<any>(null);
-  const historicalHeatLayerRef = useRef<any>(null);
-  const historicalBurntLayerRef = useRef<any>(null);
-  const historicalSmokeLayerRef = useRef<any>(null);
-  const copernicusBurntLayerRef = useRef<any>(null);
-  const copernicusFrontLayerRef = useRef<any>(null);
-  const userMarkerRef = useRef<any>(null);
-  const forecastMarkerRef = useRef<any>(null);
-  const canvasRendererRef = useRef<any>(null);
+  const mapRef = useRef<Leaflet.Map | null>(null);
+  const situationLayerRef = useRef<Leaflet.LayerGroup | null>(null);
+  const fireAreaLayerRef = useRef<Leaflet.LayerGroup | null>(null);
+  const airLayerRef = useRef<Leaflet.LayerGroup | null>(null);
+  const heatLayerRef = useRef<Leaflet.TileLayer.WMS | null>(null);
+  const burntLayerRef = useRef<Leaflet.TileLayer.WMS | null>(null);
+  const smokeLayerRef = useRef<Leaflet.TileLayer | null>(null);
+  const historicalHeatLayerRef = useRef<Leaflet.ImageOverlay | null>(null);
+  const historicalBurntLayerRef = useRef<Leaflet.ImageOverlay | null>(null);
+  const historicalSmokeLayerRef = useRef<Leaflet.ImageOverlay | null>(null);
+  const copernicusBurntLayerRef = useRef<Leaflet.LayerGroup | null>(null);
+  const copernicusFrontLayerRef = useRef<Leaflet.LayerGroup | null>(null);
+  const userMarkerRef = useRef<Leaflet.Marker | null>(null);
+  const forecastMarkerRef = useRef<Leaflet.Marker | null>(null);
+  const canvasRendererRef = useRef<Leaflet.Renderer | null>(null);
   const forecastRequestRef = useRef<AbortController | null>(null);
   const forecastCacheRef = useRef<Map<string, ForecastCacheEntry>>(new Map());
 
@@ -245,7 +250,7 @@ export default function Dashboard() {
   const [liveAirStations, setLiveAirStations] = useState<AirStation[]>([]);
   const [liveRegion, setLiveRegion] = useState<RegionData>(defaultRegionData);
   const [liveSatellite, setLiveSatellite] = useState<SnapshotData["satellite"]>(undefined);
-  const [cachedFireMap, setCachedFireMap] = useState<any>(null);
+  const [cachedFireMap, setCachedFireMap] = useState<CopernicusFireMap | null>(null);
   const [snapshots, setSnapshots] = useState<SnapshotRecord[]>([]);
   const [snapshotIndex, setSnapshotIndex] = useState<number | null>(null);
   const [mapReady, setMapReady] = useState(false);
@@ -675,7 +680,7 @@ export default function Dashboard() {
           },
         );
 
-        map.on("click", (event: any) => {
+        map.on("click", (event: Leaflet.LeafletMouseEvent) => {
           requestForecast(event.latlng.lat, event.latlng.lng);
         });
 
@@ -742,9 +747,12 @@ export default function Dashboard() {
   useEffect(() => {
     let active = true;
     if (!displaySatellite?.layers.copernicus || !satelliteStorageId) {
-      setCachedFireMap(null);
+      const clearCachedMap = window.setTimeout(() => {
+        if (active) setCachedFireMap(null);
+      }, 0);
       return () => {
         active = false;
+        window.clearTimeout(clearCachedMap);
       };
     }
     fetch(
@@ -753,7 +761,7 @@ export default function Dashboard() {
     )
       .then((response) => {
         if (!response.ok) throw new Error("Copernicus histórico no disponible");
-        return response.json();
+        return response.json() as Promise<CopernicusFireMap>;
       })
       .then((data) => {
         if (active) setCachedFireMap(data);
@@ -828,10 +836,10 @@ export default function Dashboard() {
       ? formatSnapshotTime(source.frontObservedAt)
       : "hora no disponible";
     const areaFeature = displayFireMap.features.find(
-      (feature: any) => feature.properties?.kind === "burnt-area",
+      (feature) => feature.properties?.kind === "burnt-area",
     );
     const frontFeatures = displayFireMap.features.filter(
-      (feature: any) =>
+      (feature) =>
         feature.properties?.kind === "fire-front" ||
         feature.properties?.kind === "active-flame",
     );
@@ -846,13 +854,13 @@ export default function Dashboard() {
           fillColor: "#a45b48",
           fillOpacity: 0.34,
         },
-        onEachFeature: (_feature: any, layer: any) => {
+        onEachFeature: (_feature, layer) => {
           layer
             .bindPopup(
               `<div class="foco-popup"><span class="popup-kicker" style="color:#8d4938">COPERNICUS · ÁREA RECORRIDA</span><strong>La Mierla · Guadalajara</strong><p>Delimitación acumulada de los productos disponibles. Máximo cartografiado en un producto: ${Number(source.mappedAreaHectares || 0).toLocaleString("es-ES")} ha.</p><small>${escapeHtml(source.areaProduct || "Producto")}, observado ${escapeHtml(observedArea)} · lectura ${escapeHtml(source.readAt ? formatSnapshotTime(source.readAt) : "sin hora")}</small></div>`,
               { closeButton: false },
             )
-            .on("click", (event: any) =>
+            .on("click", (event: Leaflet.LeafletMouseEvent) =>
               requestForecast(event.latlng.lat, event.latlng.lng),
             );
         },
@@ -872,16 +880,16 @@ export default function Dashboard() {
     }
 
     if (frontFeatures.length) {
-      L.geoJSON(
+      L.geoJSON<CopernicusFeatureProperties>(
         { type: "FeatureCollection", features: frontFeatures },
         {
           renderer: canvasRendererRef.current,
           bubblingMouseEvents: false,
-          style: (feature: any) =>
+          style: (feature) =>
             feature?.properties?.kind === "fire-front"
               ? { color: "#ffcc3d", weight: 4, opacity: 0.95, dashArray: "8 5" }
               : {},
-          pointToLayer: (_feature: any, latlng: any) =>
+          pointToLayer: (_feature, latlng) =>
             L.circleMarker(latlng, {
               renderer: canvasRendererRef.current,
               radius: 3.5,
@@ -891,7 +899,7 @@ export default function Dashboard() {
               bubblingMouseEvents: false,
               fillOpacity: 0.95,
             }),
-          onEachFeature: (feature: any, layer: any) => {
+          onEachFeature: (feature, layer) => {
             const isFront = feature.properties?.kind === "fire-front";
             layer
               .bindPopup(
@@ -959,7 +967,7 @@ export default function Dashboard() {
           `<div class="foco-popup"><span class="popup-kicker" style="color:#e74731">${escapeHtml(fire.level)} · ${escapeHtml(fire.provinces)}</span><strong>${escapeHtml(fire.name)}</strong><p>${escapeHtml(fire.status)}. ${fire.areaHectares ? `Superficie comunicada: ${fire.areaHectares.toLocaleString("es-ES")} ha. ` : ""}${escapeHtml(fire.detail)}</p><small>Zona orientativa, no perímetro · ${escapeHtml(fire.sourceLabel)} · ${escapeHtml(fire.sourceUpdatedAt)}</small></div>`,
           { closeButton: false },
         )
-        .on("click", (event: any) =>
+        .on("click", (event: Leaflet.LeafletMouseEvent) =>
           requestForecast(event.latlng.lat, event.latlng.lng),
         )
         .addTo(fireAreaLayerRef.current);
@@ -995,7 +1003,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
     const map = mapRef.current;
-    const toggleLayer = (layer: any, visible: boolean) => {
+    const toggleLayer = (layer: Leaflet.Layer | null, visible: boolean) => {
       if (!layer) return;
       if (visible && !map.hasLayer(layer)) layer.addTo(map);
       if (!visible && map.hasLayer(layer)) map.removeLayer(layer);
@@ -1037,14 +1045,15 @@ export default function Dashboard() {
   const focusPoint = (point: SituationPoint) => {
     setMobileSidebarOpen(false);
     mapRef.current?.setView([point.lat, point.lon], 12);
-    situationLayerRef.current?.eachLayer((layer: any) => {
-      const location = layer.getLatLng?.();
+    situationLayerRef.current?.eachLayer((layer) => {
+      const marker = layer as Leaflet.Marker;
+      const location = marker.getLatLng();
       if (
         location &&
         Math.abs(location.lat - point.lat) < 0.000001 &&
         Math.abs(location.lng - point.lon) < 0.000001
       ) {
-        layer.openPopup();
+        marker.openPopup();
       }
     });
   };
@@ -1326,7 +1335,7 @@ export default function Dashboard() {
               <b>Situación y fuentes</b>
               <button type="button" onClick={() => setMobileSidebarOpen(false)} aria-label="Cerrar panel">×</button>
             </div>
-            <nav className="sidebar-tabs" aria-label="Secciones del panel">
+            <nav className="sidebar-tabs" aria-label="Secciones del panel" role="tablist">
               {([
                 ["news", "Actualidad"],
                 ["evacuations", "Evacuaciones"],
@@ -1335,6 +1344,7 @@ export default function Dashboard() {
                 <button
                   key={tab}
                   type="button"
+                  role="tab"
                   className={sidebarTab === tab ? "active" : ""}
                   aria-selected={sidebarTab === tab}
                   onClick={() => setSidebarTab(tab)}

@@ -93,7 +93,9 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
 ## Flujo seguro de cambios
 
 1. Trabajar en un checkout aislado; no editar la carpeta `data`.
-2. Ejecutar `npm test`, `git diff --check` y `npm audit --omit=dev`.
+2. Ejecutar `npm test`, `npm run lint`, `git diff --check` y
+   `npm audit --omit=dev`. Las pruebas construyen en `/tmp` y no alteran el
+   `dist` que sirve producción.
 3. Construir con Node 22.
 4. Subir a `main`.
 5. Preparar `dist` antes de tocar producción y cambiarlo con un rename.
@@ -101,6 +103,9 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
    pública. No reiniciar Cloudflare.
 7. Si cambia una captura, reiniciar `foco-snapshotter.service` para forzar una
    lectura y validar manifiesto, dimensiones y errores.
+
+Los artefactos de reversión se guardan en `var/releases/`; se conserva al menos
+el despliegue anterior validado y nunca se incluyen en Git ni en ESLint.
 
 La superficie pública debe seguir siendo de solo lectura salvo la señal vacía y
 anónima de `/api/analytics/visit`. `/api/snapshots` acepta POST únicamente con el

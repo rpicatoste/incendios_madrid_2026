@@ -1,3 +1,5 @@
+import type { FeatureCollection, MultiLineString, MultiPoint, MultiPolygon } from "geojson";
+
 const ACTIVATION_CODE = "EMSR898";
 const ACTIVATION_URL = `https://mapping.emergency.copernicus.eu/activations/${ACTIVATION_CODE}/`;
 const API_URL =
@@ -18,6 +20,43 @@ type Product = {
   version?: { deliveryTime?: string };
 };
 
+type Activation = { aois?: { products?: Product[] }[] };
+type RemoteGeometry =
+  | { type: "Polygon"; coordinates: Point[][] }
+  | { type: "MultiPolygon"; coordinates: Point[][][] }
+  | { type: "LineString"; coordinates: Point[] }
+  | { type: "MultiLineString"; coordinates: Point[][] }
+  | { type: "Point"; coordinates: Point }
+  | { type: "MultiPoint"; coordinates: Point[] };
+type RemoteFeatureCollection = {
+  features: Array<{ geometry?: RemoteGeometry | null }>;
+};
+
+export type CopernicusFeatureProperties = {
+  kind: "burnt-area" | "fire-front" | "active-flame";
+  label: string;
+};
+
+export type CopernicusFireMap = FeatureCollection<
+  MultiPolygon | MultiLineString | MultiPoint,
+  CopernicusFeatureProperties
+> & {
+  source: {
+    activationCode: string;
+    label: string;
+    url: string;
+    readAt: string;
+    areaProduct: string;
+    areaObservedAt: string;
+    areaDeliveredAt: string | null;
+    mappedAreaHectares: number | null;
+    activeFlames: number;
+    frontProduct: string | null;
+    frontObservedAt: string | null;
+    frontKilometres: number | null;
+  };
+};
+
 type ProductGeometry = {
   polygons: Point[][][];
   lines: Point[][];
@@ -25,16 +64,16 @@ type ProductGeometry = {
 };
 
 let metadataCache:
-  | { expiresAt: number; activation: { aois?: { products?: Product[] }[] } }
+  | { expiresAt: number; activation: Activation }
   | undefined;
 const productGeometryCache = new Map<string, Promise<ProductGeometry>>();
 
-const fetchJson = async (url: string) => {
+const fetchJson = async <T,>(url: string): Promise<T> => {
   const response = await fetch(url, {
     headers: { "User-Agent": "FOCO-Centro/2.0" },
   });
   if (!response.ok) throw new Error(`Copernicus respondió ${response.status}`);
-  return response.json();
+  return response.json() as Promise<T>;
 };
 
 const officialJsonUrl = (product: Product, fragment: string) => {
@@ -142,22 +181,22 @@ const simplifyRing = (coordinates: Point[]) => {
   return [...valid, valid[0]];
 };
 
-const polygonsFrom = (collection: any): Point[][][] =>
-  collection.features.flatMap((feature: any) => {
+const polygonsFrom = (collection: RemoteFeatureCollection): Point[][][] =>
+  collection.features.flatMap((feature): Point[][][] => {
     if (feature.geometry?.type === "Polygon") return [feature.geometry.coordinates];
     if (feature.geometry?.type === "MultiPolygon") return feature.geometry.coordinates;
     return [];
   });
 
-const linesFrom = (collection: any): Point[][] =>
-  collection.features.flatMap((feature: any) => {
+const linesFrom = (collection: RemoteFeatureCollection): Point[][] =>
+  collection.features.flatMap((feature): Point[][] => {
     if (feature.geometry?.type === "LineString") return [feature.geometry.coordinates];
     if (feature.geometry?.type === "MultiLineString") return feature.geometry.coordinates;
     return [];
   });
 
-const pointsFrom = (collection: any): Point[] =>
-  collection.features.flatMap((feature: any) => {
+const pointsFrom = (collection: RemoteFeatureCollection): Point[] =>
+  collection.features.flatMap((feature): Point[] => {
     if (feature.geometry?.type === "Point") return [feature.geometry.coordinates];
     if (feature.geometry?.type === "MultiPoint") return feature.geometry.coordinates;
     return [];
@@ -167,7 +206,7 @@ const getActivation = async () => {
   if (metadataCache && metadataCache.expiresAt > Date.now()) {
     return metadataCache.activation;
   }
-  const response = await fetchJson(API_URL);
+  const response = await fetchJson<Activation & { results?: Activation[] }>(API_URL);
   const activation = response.results?.[0] || response;
   metadataCache = { expiresAt: Date.now() + METADATA_TTL_MS, activation };
   return activation;
@@ -183,9 +222,15 @@ const getProductGeometry = async (product: Product): Promise<ProductGeometry> =>
     const frontUrl = officialJsonUrl(product, "_observedEventL_");
     const flameUrl = officialJsonUrl(product, "_observedEventP_");
     const [area, fronts, flames] = await Promise.all([
-      areaUrl ? fetchJson(areaUrl) : Promise.resolve({ features: [] }),
-      frontUrl ? fetchJson(frontUrl) : Promise.resolve({ features: [] }),
-      flameUrl ? fetchJson(flameUrl) : Promise.resolve({ features: [] }),
+      areaUrl
+        ? fetchJson<RemoteFeatureCollection>(areaUrl)
+        : Promise.resolve({ features: [] }),
+      frontUrl
+        ? fetchJson<RemoteFeatureCollection>(frontUrl)
+        : Promise.resolve({ features: [] }),
+      flameUrl
+        ? fetchJson<RemoteFeatureCollection>(flameUrl)
+        : Promise.resolve({ features: [] }),
     ]);
     return {
       polygons: polygonsFrom(area).map((polygon) => polygon.map(simplifyRing)),
@@ -202,7 +247,7 @@ const getProductGeometry = async (product: Product): Promise<ProductGeometry> =>
   }
 };
 
-export const getCopernicusFireMap = async () => {
+export const getCopernicusFireMap = async (): Promise<CopernicusFireMap> => {
   const activation = await getActivation();
   const products = [...(activation.aois?.[0]?.products || [])]
     .filter((product: Product) => product.type === "DEL")
