@@ -126,8 +126,8 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(dashboard, /pane: "foco-user-location"/);
   assert.match(dashboard, /zIndexOffset: 2000/);
   assert.match(dashboard, /pane: "foco-forecast-point"/);
-  assert.match(dashboard, /class="forecast-point-marker"/);
-  assert.match(dashboard, /className="forecast-title-pin"/);
+  assert.match(dashboard, /class="forecast-point-symbol forecast-point-symbol--map"/);
+  assert.match(dashboard, /className="forecast-point-symbol forecast-point-symbol--title"/);
   assert.match(dashboard, /className="forecast-day-card"/);
   assert.match(dashboard, /startsDay/);
   assert.match(dashboard, /className="wind-arrow"/);

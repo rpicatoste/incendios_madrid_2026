@@ -577,7 +577,7 @@ export default function Dashboard() {
     forecastMarkerRef.current = window.L.marker(latLng, {
       icon: window.L.divIcon({
         className: "foco-map-icon",
-        html: '<span class="forecast-point-marker" aria-hidden="true"><i></i></span>',
+        html: '<span class="forecast-point-symbol forecast-point-symbol--map" aria-hidden="true"></span>',
         iconSize: [30, 30],
         iconAnchor: [15, 15],
       }),
@@ -1446,7 +1446,8 @@ export default function Dashboard() {
               <div>
                 <div className="forecast-title-row">
                   <span className="eyebrow">
-                    PREVISIÓN DEL PUNTO <i className="forecast-title-pin" aria-hidden="true">⌖</i>
+                    PREVISIÓN DEL PUNTO{" "}
+                    <i className="forecast-point-symbol forecast-point-symbol--title" aria-hidden="true"></i>
                   </span>
                   {selectedPoint && (
                     <small>{selectedPoint.lat.toFixed(4)}, {selectedPoint.lon.toFixed(4)} · Open‑Meteo</small>
