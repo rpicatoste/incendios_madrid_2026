@@ -85,6 +85,7 @@ test("keeps upstream access fixed and the production listener private", async ()
     statusRoute,
     madridStatus,
     liveRegion,
+    regionData,
     fnmtCertificate,
   ] = await Promise.all([
     readFile(new URL("../app/api/air/route.ts", import.meta.url), "utf8"),
@@ -100,6 +101,7 @@ test("keeps upstream access fixed and the production listener private", async ()
     readFile(new URL("../app/api/status/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/madrid-status.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/live-region.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/region-data.ts", import.meta.url), "utf8"),
     readFile(new URL("../ops/fnmt-components.pem", import.meta.url), "utf8"),
   ]);
 
@@ -189,6 +191,11 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(liveRegion, /status\.authoritative\.evacuated/);
   assert.match(liveRegion, /nominatim\.openstreetmap\.org\/search/);
   assert.match(liveRegion, /geocodes\.json/);
+  assert.match(regionData, /guadalajaraEvacuations/);
+  assert.match(regionData, /guadalajaraConfinements/);
+  assert.match(regionData, /guadalajaraPoint\("hiendelaencina"/);
+  assert.match(regionData, /guadalajaraPoint\("albendiego"/);
+  assert.match(regionData, /20 jul · última relación nominal/);
   assert.match(css, /\.topbar\s*\{\s*height:\s*46px;/);
   assert.match(css, /\.forecast-panel\.open\s*\{\s*height:\s*176px;/);
   assert.doesNotMatch(css, /\.map-legend\.forecast-open\s*\{[^}]*opacity:\s*0/s);
