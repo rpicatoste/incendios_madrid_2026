@@ -1,5 +1,15 @@
 const SOURCE =
   "https://www.comunidad.madrid/seguridad-emergencias-asem-112/incendio-forestal-sierra-oeste-ifsierraoeste-julio-2026";
+const CACHE_HEADERS = {
+  "Cache-Control": "public, max-age=120, stale-while-revalidate=600",
+};
+
+let memoryCache:
+  | {
+      expiresAt: number;
+      payload: Record<string, unknown>;
+    }
+  | undefined;
 
 const fallback = {
   lastUpdated: "24 de julio · 23:30 h",
@@ -55,6 +65,10 @@ const listAfter = (html: string, startPattern: RegExp) => {
 };
 
 export async function GET() {
+  if (memoryCache && memoryCache.expiresAt > Date.now()) {
+    return Response.json(memoryCache.payload, { headers: CACHE_HEADERS });
+  }
+
   try {
     const response = await fetch(SOURCE, {
       headers: { "User-Agent": "FOCO-Madrid/1.0" },
@@ -69,14 +83,19 @@ export async function GET() {
     const roadRows = listAfter(html, /<h3>\s*Cortes de carreteras:/i);
     const roads = roadRows.map((row) => row.split(":")[0].trim());
 
-    return Response.json({
+    const payload = {
       lastUpdated: updatedMatch ? decode(updatedMatch[1]).replace(" a las ", " · ") : fallback.lastUpdated,
       evacuated: evacuated.length ? evacuated : fallback.evacuated,
       shelters: shelters.length ? shelters : fallback.shelters,
       roads: roads.length ? roads : fallback.roads,
       fetchedAt: new Date().toISOString(),
-    });
+    };
+    memoryCache = { expiresAt: Date.now() + 2 * 60 * 1000, payload };
+    return Response.json(payload, { headers: CACHE_HEADERS });
   } catch {
-    return Response.json({ ...fallback, fetchedAt: new Date().toISOString() });
+    return Response.json(
+      { ...fallback, fetchedAt: new Date().toISOString() },
+      { headers: CACHE_HEADERS },
+    );
   }
 }

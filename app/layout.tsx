@@ -1,17 +1,6 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
@@ -22,14 +11,14 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     metadataBase: new URL(baseUrl),
     title: {
-      default: "FOCO Madrid — Incendios y calidad del aire",
-      template: "%s · FOCO Madrid",
+      default: "FOCO Centro — Incendios y calidad del aire",
+      template: "%s · FOCO Centro",
     },
     description:
-      "Mapa ciudadano de seguimiento de incendios, evacuaciones, confinamientos, calidad del aire y meteorología en la Comunidad de Madrid.",
+      "Mapa ciudadano de seguimiento de incendios, evacuaciones, confinamientos, calidad del aire y meteorología en Madrid y las comunidades limítrofes.",
     openGraph: {
-      title: "FOCO Madrid",
-      description: "Incendios, avisos, aire y meteorología en un único mapa.",
+      title: "FOCO Centro",
+      description: "Incendios, avisos, aire, histórico y meteorología en un único mapa.",
       type: "website",
       locale: "es_ES",
       url: baseUrl,
@@ -37,8 +26,8 @@ export async function generateMetadata(): Promise<Metadata> {
     },
     twitter: {
       card: "summary_large_image",
-      title: "FOCO Madrid",
-      description: "Incendios, avisos, aire y meteorología en un único mapa.",
+      title: "FOCO Centro",
+      description: "Incendios, avisos, aire, histórico y meteorología en un único mapa.",
       images: [`${baseUrl}/og.png`],
     },
     icons: {
@@ -50,7 +39,7 @@ export async function generateMetadata(): Promise<Metadata> {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="es">
-      <body className={`${geistSans.variable} ${geistMono.variable}`}>{children}</body>
+      <body>{children}</body>
     </html>
   );
 }

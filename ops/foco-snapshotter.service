@@ -1,0 +1,25 @@
+[Unit]
+Description=FOCO Centro hourly snapshot collector
+After=foco-app.service
+Requires=foco-app.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/rpica/workspace/incendios_madrid_2026
+Environment=PATH=/home/rpica/.local/node-v22/bin:/usr/local/bin:/usr/bin:/bin
+Environment=FOCO_ORIGIN=http://127.0.0.1:3000
+EnvironmentFile=/home/rpica/workspace/incendios_madrid_2026/.env
+ExecStart=/home/rpica/.local/node-v22/bin/node scripts/snapshot-daemon.mjs
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

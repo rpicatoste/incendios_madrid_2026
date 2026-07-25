@@ -1,0 +1,56 @@
+services:
+  app:
+    build:
+      context: .
+    image: foco-centro:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - foco_state:/app/data
+    environment:
+      FOCO_DATA_DIR: "/app/data"
+      FOCO_SNAPSHOT_TOKEN: "${FOCO_SNAPSHOT_TOKEN:?Define FOCO_SNAPSHOT_TOKEN in .env}"
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/region').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  snapshotter:
+    image: foco-centro:latest
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      FOCO_ORIGIN: "http://app:3000"
+      FOCO_SNAPSHOT_TOKEN: "${FOCO_SNAPSHOT_TOKEN:?Define FOCO_SNAPSHOT_TOKEN in .env}"
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 64
+    command: ["node", "scripts/snapshot-daemon.mjs"]
+
+volumes:
+  foco_state:
+    name: foco-centro-state

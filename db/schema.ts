@@ -1,4 +1,3 @@
-// Intentionally empty by default.
-// Add Drizzle tables here when the site actually needs a database.
-// See examples/d1/db/schema.ts for an opt-in example.
+// The local-only viewer persists its hourly history in a Docker volume.
+// D1 remains available if the project is ever moved to Cloudflare hosting.
 export {};

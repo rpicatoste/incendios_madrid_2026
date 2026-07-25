@@ -1,22 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  defaultRegionData,
+  type RegionData,
+  type SituationPoint,
+  type StatusKind,
+} from "../lib/region-data";
 
 declare global {
   interface Window {
     L?: any;
   }
 }
-
-type StatusKind = "evacuado" | "confinado" | "acogida";
-
-type SituationPoint = {
-  name: string;
-  kind: StatusKind;
-  lat: number;
-  lon: number;
-  detail: string;
-};
 
 type AirStation = {
   id: number;
@@ -27,6 +23,8 @@ type AirStation = {
   color: string;
   pollutant: string | null;
   value: number | null;
+  index?: number;
+  incomplete?: boolean;
   hour: string | null;
 };
 
@@ -48,78 +46,57 @@ type LiveStatus = {
   fetchedAt: string;
 };
 
+type SnapshotData = {
+  status: LiveStatus;
+  airStations: AirStation[];
+  region: RegionData;
+  layerTime: string;
+};
+
+type SnapshotRecord = {
+  id: string;
+  capturedAt: string;
+  data: SnapshotData;
+};
+
 const OFFICIAL_URL =
   "https://www.comunidad.madrid/seguridad-emergencias-asem-112/incendio-forestal-sierra-oeste-ifsierraoeste-julio-2026";
-
-const points: SituationPoint[] = [
-  { name: "Camping El Escorial", kind: "evacuado", lat: 40.5905, lon: -4.147, detail: "Desalojo preventivo comunicado por la Comunidad de Madrid." },
-  { name: "Navas del Rey", kind: "evacuado", lat: 40.3869, lon: -4.251, detail: "Municipio incluido en la relación oficial de evacuados." },
-  { name: "Chapinería", kind: "evacuado", lat: 40.3788, lon: -4.2093, detail: "Evacuación comunicada mediante ES-Alert." },
-  { name: "Colmenar del Arroyo", kind: "evacuado", lat: 40.4191, lon: -4.1983, detail: "Evacuación comunicada mediante ES-Alert." },
-  { name: "Aldea del Fresno", kind: "evacuado", lat: 40.323, lon: -4.203, detail: "Municipio incluido en la relación oficial de evacuados." },
-  { name: "Robledo de Chavela", kind: "evacuado", lat: 40.5006, lon: -4.2375, detail: "Municipio incluido en la relación oficial de evacuados." },
-  { name: "Fresnedillas de la Oliva", kind: "evacuado", lat: 40.4875, lon: -4.1716, detail: "Traslado hacia centros habilitados en Móstoles." },
-  { name: "Navalagamella", kind: "evacuado", lat: 40.4689, lon: -4.124, detail: "Municipio incluido en la relación oficial de evacuados." },
-  { name: "Zarzalejo", kind: "evacuado", lat: 40.5488, lon: -4.1816, detail: "Municipio incluido en la relación oficial de evacuados." },
-  { name: "San Martín de Valdeiglesias", kind: "confinado", lat: 40.3611, lon: -4.3983, detail: "ES-Alert: dirigirse al interior del casco urbano y permanecer a resguardo." },
-  { name: "Pelayos de la Presa", kind: "confinado", lat: 40.3609, lon: -4.3349, detail: "ES-Alert: dirigirse al interior del casco urbano y permanecer a resguardo." },
-  { name: "Villaviciosa de Odón", kind: "acogida", lat: 40.3579, lon: -3.9008, detail: "Punto de acogida habilitado." },
-  { name: "Móstoles", kind: "acogida", lat: 40.3223, lon: -3.8649, detail: "Punto de acogida habilitado." },
-  { name: "Brunete", kind: "acogida", lat: 40.4053, lon: -3.9976, detail: "Punto de acogida habilitado." },
-  { name: "Leganés", kind: "acogida", lat: 40.3281, lon: -3.7644, detail: "Punto de acogida habilitado." },
-  { name: "Villanueva de la Cañada", kind: "acogida", lat: 40.4469, lon: -4.0043, detail: "Punto de acogida habilitado." },
-  { name: "Villanueva de Perales", kind: "acogida", lat: 40.3467, lon: -4.1018, detail: "Punto de acogida habilitado." },
-  { name: "Villamantilla", kind: "acogida", lat: 40.3388, lon: -4.1303, detail: "Punto de acogida habilitado." },
-  { name: "Villamanta", kind: "acogida", lat: 40.2988, lon: -4.1081, detail: "Punto de acogida habilitado." },
-  { name: "Las Rozas", kind: "acogida", lat: 40.4929, lon: -3.8737, detail: "Punto de acogida habilitado." },
-  { name: "Alcorcón", kind: "acogida", lat: 40.3458, lon: -3.8249, detail: "Punto de acogida habilitado." },
-];
+const DSN_URL = "https://www.dsn.gob.es/gl/node/32742";
+const CLM_URL =
+  "https://www.castillalamancha.es/actualidad/notasdeprensa/castilla-la-mancha-moviliza-un-amplio-operativo-para-hacer-frente-los-incendios-registrados-en-la";
+const MITECO_ICA_URL = "https://ica.miteco.es/datos/ica-ultima-hora.csv";
 
 const fallbackStatus: LiveStatus = {
   lastUpdated: "24 de julio · 23:30 h",
-  evacuated: points.filter((point) => point.kind === "evacuado").map((point) => point.name),
-  shelters: [
-    "Villaviciosa de Odón", "Móstoles", "Alcalá de Henares", "Brunete",
-    "Leganés", "Villanueva de la Cañada", "Villamantilla",
-    "Villanueva de Perales", "Getafe", "Villamanta", "Alcobendas",
-    "Las Rozas", "Alcorcón",
-  ],
+  evacuated: defaultRegionData.points
+    .filter((point) => point.kind === "evacuado" && point.province === "Madrid")
+    .map((point) => point.name),
+  shelters: defaultRegionData.points
+    .filter((point) => point.kind === "acogida")
+    .map((point) => point.name),
   roads: ["M-50", "M-540", "M-501", "M-541", "M-510", "M-512", "M-531", "M-539", "M-533", "M-521"],
   fetchedAt: "",
 };
 
-const kindMeta: Record<StatusKind, { label: string; short: string; color: string; icon: string }> = {
-  evacuado: { label: "Evacuado", short: "E", color: "#ff5a45", icon: "↗" },
-  confinado: { label: "Confinamiento", short: "C", color: "#ffb33f", icon: "⌂" },
-  acogida: { label: "Punto de acogida", short: "A", color: "#49b8ff", icon: "+" },
+const kindMeta: Record<StatusKind, { label: string; plural: string; color: string; icon: string }> = {
+  evacuado: { label: "Evacuación", plural: "Evacuaciones", color: "#ff5a45", icon: "↗" },
+  confinado: { label: "Confinamiento", plural: "Confinamientos", color: "#ffb33f", icon: "⌂" },
+  acogida: { label: "Punto de acogida", plural: "Puntos de acogida", color: "#49b8ff", icon: "+" },
+  seguimiento: { label: "Incendio en seguimiento", plural: "En seguimiento", color: "#8d62db", icon: "!" },
 };
+
+const escapeHtml = (value: string | number | null | undefined) =>
+  String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 
 const loadLeaflet = async () => {
   if (window.L) return window.L;
-
-  if (!document.querySelector('link[data-leaflet="true"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-    link.dataset.leaflet = "true";
-    document.head.appendChild(link);
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    const existing = document.querySelector<HTMLScriptElement>('script[data-leaflet="true"]');
-    if (existing) {
-      if (window.L) resolve();
-      else existing.addEventListener("load", () => resolve(), { once: true });
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    script.dataset.leaflet = "true";
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("No se pudo cargar el mapa"));
-    document.head.appendChild(script);
-  });
-
+  const leafletModule = await import("leaflet");
+  window.L = leafletModule.default || leafletModule;
   return window.L;
 };
 
@@ -128,43 +105,81 @@ const compass = (degrees: number) => {
   return directions[Math.round(degrees / 45) % 8];
 };
 
+const formatSnapshotTime = (value: string) =>
+  new Intl.DateTimeFormat("es-ES", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+
 export default function Dashboard() {
   const mapNodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const situationLayerRef = useRef<any>(null);
+  const fireAreaLayerRef = useRef<any>(null);
   const airLayerRef = useRef<any>(null);
   const heatLayerRef = useRef<any>(null);
   const burntLayerRef = useRef<any>(null);
+  const smokeLayerRef = useRef<any>(null);
   const userMarkerRef = useRef<any>(null);
 
   const [liveStatus, setLiveStatus] = useState<LiveStatus>(fallbackStatus);
-  const [airStations, setAirStations] = useState<AirStation[]>([]);
+  const [liveAirStations, setLiveAirStations] = useState<AirStation[]>([]);
+  const [liveRegion, setLiveRegion] = useState<RegionData>(defaultRegionData);
+  const [snapshots, setSnapshots] = useState<SnapshotRecord[]>([]);
+  const [snapshotIndex, setSnapshotIndex] = useState<number | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState("");
   const [locationState, setLocationState] = useState("Buscando tu posición…");
   const [activeKinds, setActiveKinds] = useState<Record<StatusKind, boolean>>({
     evacuado: true,
     confinado: true,
-    acogida: false,
+    acogida: true,
+    seguimiento: true,
   });
   const [airVisible, setAirVisible] = useState(true);
   const [heatVisible, setHeatVisible] = useState(true);
   const [burntVisible, setBurntVisible] = useState(true);
+  const [smokeVisible, setSmokeVisible] = useState(true);
+  const [fireAreasVisible, setFireAreasVisible] = useState(true);
+  const [userVisible, setUserVisible] = useState(true);
   const [selectedPoint, setSelectedPoint] = useState<{ lat: number; lon: number; label: string } | null>(null);
   const [forecast, setForecast] = useState<ForecastHour[]>([]);
   const [forecastState, setForecastState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [panelOpen, setPanelOpen] = useState(false);
-  const [activeList, setActiveList] = useState<"evacuado" | "confinado" | "acogida">("evacuado");
+  const [activeList, setActiveList] = useState<StatusKind>("evacuado");
+
+  const selectedSnapshot = snapshotIndex === null ? null : snapshots[snapshotIndex] || null;
+  const displayStatus = selectedSnapshot?.data.status || liveStatus;
+  const displayAirStations = selectedSnapshot?.data.airStations || liveAirStations;
+  const displayRegion = selectedSnapshot?.data.region || liveRegion;
+  const layerTime = selectedSnapshot?.data.layerTime || new Date().toISOString();
+  const isLive = selectedSnapshot === null;
 
   const visiblePoints = useMemo(
-    () => points.filter((point) => point.kind === activeList),
-    [activeList],
+    () => displayRegion.points.filter((point) => point.kind === activeList),
+    [activeList, displayRegion.points],
   );
 
-  useEffect(() => {
-    // En una pantalla pequeña priorizamos la emergencia y dejamos la densa
-    // red de estaciones a un toque de distancia.
-    if (window.matchMedia("(max-width: 680px)").matches) setAirVisible(false);
+  const counts = useMemo(
+    () => ({
+      evacuado: displayRegion.points.filter((point) => point.kind === "evacuado").length,
+      confinado: displayRegion.points.filter((point) => point.kind === "confinado").length,
+      acogida: displayRegion.points.filter((point) => point.kind === "acogida").length,
+      seguimiento: displayRegion.points.filter((point) => point.kind === "seguimiento").length,
+    }),
+    [displayRegion.points],
+  );
+
+  const refreshSnapshots = useCallback(async () => {
+    try {
+      const response = await fetch("/api/snapshots", { cache: "no-store" });
+      const data = (await response.json()) as { snapshots?: SnapshotRecord[] };
+      if (response.ok) setSnapshots(data.snapshots || []);
+    } catch {
+      // El mapa vivo sigue funcionando aunque el histórico local esté iniciándose.
+    }
   }, []);
 
   const requestForecast = useCallback(async (lat: number, lon: number, label?: string) => {
@@ -199,7 +214,7 @@ export default function Dashboard() {
           windDirection: data.hourly.wind_direction_10m[index] ?? 0,
         }))
         .filter((row: ForecastHour) => new Date(row.time).getTime() >= now)
-        .slice(0, 14);
+        .slice(0, 16);
       setForecast(rows);
       setForecastState("ready");
     } catch {
@@ -211,17 +226,30 @@ export default function Dashboard() {
   useEffect(() => {
     let active = true;
     const refreshLiveData = async () => {
-      const [statusResult, airResult] = await Promise.allSettled([
+      const [statusResult, airResult, regionResult] = await Promise.allSettled([
         fetch("/api/status", { cache: "no-store" }).then((response) => response.json()),
         fetch("/api/air", { cache: "no-store" }).then((response) => response.json()),
+        fetch("/api/region", { cache: "no-store" }).then((response) => response.json()),
       ]);
       if (!active) return;
-      if (statusResult.status === "fulfilled") setLiveStatus(statusResult.value as LiveStatus);
-      if (airResult.status === "fulfilled") {
-        setAirStations((airResult.value as { stations: AirStation[] }).stations || []);
-      }
+
+      const status =
+        statusResult.status === "fulfilled" ? (statusResult.value as LiveStatus) : liveStatus;
+      const airStations =
+        airResult.status === "fulfilled"
+          ? ((airResult.value as { stations?: AirStation[] }).stations || [])
+          : liveAirStations;
+      const region =
+        regionResult.status === "fulfilled" ? (regionResult.value as RegionData) : liveRegion;
+
+      setLiveStatus(status);
+      setLiveAirStations(airStations);
+      setLiveRegion(region);
+
+      refreshSnapshots();
     };
 
+    refreshSnapshots();
     refreshLiveData();
     const interval = window.setInterval(refreshLiveData, 5 * 60 * 1000);
     window.addEventListener("online", refreshLiveData);
@@ -230,7 +258,9 @@ export default function Dashboard() {
       window.clearInterval(interval);
       window.removeEventListener("online", refreshLiveData);
     };
-  }, []);
+    // Los valores de fallback se usan sólo si una fuente falla durante esta llamada.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshSnapshots]);
 
   useEffect(() => {
     let cancelled = false;
@@ -243,40 +273,20 @@ export default function Dashboard() {
           zoomControl: false,
           attributionControl: true,
           minZoom: 7,
-        }).setView([40.4168, -3.7038], 9);
+        }).setView([40.4168, -3.7038], 8);
 
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
           maxZoom: 18,
           attribution: "© OpenStreetMap",
         }).addTo(map);
-
         L.control.zoom({ position: "bottomright" }).addTo(map);
 
-        const situationLayer = L.layerGroup().addTo(map);
-        situationLayerRef.current = situationLayer;
-        points.forEach((point) => {
-          const meta = kindMeta[point.kind];
-          const icon = L.divIcon({
-            className: "foco-map-icon",
-            html: `<span class="status-marker status-marker--${point.kind}" aria-hidden="true">${meta.icon}</span>`,
-            iconSize: [34, 34],
-            iconAnchor: [17, 17],
-          });
-          const marker = L.marker([point.lat, point.lon], { icon });
-          marker.__focoKind = point.kind;
-          marker.__focoName = point.name;
-          marker
-            .bindPopup(
-              `<div class="foco-popup"><span class="popup-kicker" style="color:${meta.color}">${meta.label}</span><strong>${point.name}</strong><p>${point.detail}</p><small>Fuente: parte oficial Comunidad de Madrid</small></div>`,
-              { closeButton: false, offset: [0, -9] },
-            )
-            .on("click", () => requestForecast(point.lat, point.lon, point.name))
-            .addTo(situationLayer);
-        });
+        situationLayerRef.current = L.layerGroup().addTo(map);
+        fireAreaLayerRef.current = L.layerGroup().addTo(map);
+        airLayerRef.current = L.layerGroup().addTo(map);
 
-        const heat = L.tileLayer.wms(
-          "https://maps.effis.emergency.copernicus.eu/effis",
-          {
+        heatLayerRef.current = L.tileLayer
+          .wms("https://maps.effis.emergency.copernicus.eu/effis", {
             layers: "viirs.hs",
             format: "image/png",
             transparent: true,
@@ -284,25 +294,30 @@ export default function Dashboard() {
             time: new Date().toISOString().slice(0, 10),
             opacity: 0.78,
             attribution: "Copernicus EFFIS / NASA VIIRS",
-          },
-        ).addTo(map);
-        heatLayerRef.current = heat;
+          })
+          .addTo(map);
 
-        const burnt = L.tileLayer.wms(
-          "https://maps.effis.emergency.copernicus.eu/effis",
-          {
+        burntLayerRef.current = L.tileLayer
+          .wms("https://maps.effis.emergency.copernicus.eu/effis", {
             layers: "effis.nrt.ba.poly",
             format: "image/png",
             transparent: true,
             version: "1.1.1",
             time: new Date().toISOString().slice(0, 10),
-            opacity: 0.42,
+            opacity: 0.48,
             attribution: "Copernicus EFFIS / GWIS",
+          })
+          .addTo(map);
+
+        smokeLayerRef.current = L.tileLayer(
+          `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_Aerosol_Type_Deep_Blue_Best_Estimate/default/${new Date().toISOString().slice(0, 10)}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.png`,
+          {
+            maxNativeZoom: 6,
+            maxZoom: 18,
+            opacity: 0.52,
+            attribution: "NASA GIBS / VIIRS Deep Blue",
           },
         ).addTo(map);
-        burntLayerRef.current = burnt;
-
-        airLayerRef.current = L.layerGroup().addTo(map);
 
         map.on("click", (event: any) => {
           requestForecast(event.latlng.lat, event.latlng.lng);
@@ -315,7 +330,7 @@ export default function Dashboard() {
           navigator.geolocation.getCurrentPosition(
             (position) => {
               const { latitude, longitude } = position.coords;
-              map.setView([latitude, longitude], 11);
+              map.setView([latitude, longitude], 10);
               const icon = L.divIcon({
                 className: "foco-map-icon",
                 html: '<span class="user-marker"><span></span></span>',
@@ -323,11 +338,11 @@ export default function Dashboard() {
                 iconAnchor: [14, 14],
               });
               userMarkerRef.current = L.marker([latitude, longitude], { icon })
-                .bindPopup("<div class=\"foco-popup\"><strong>Tu posición</strong><p>El mapa se ha centrado aquí.</p></div>")
+                .bindPopup('<div class="foco-popup"><strong>Tu posición</strong><p>El mapa se ha centrado aquí.</p></div>')
                 .addTo(map);
               setLocationState("Centrado en tu posición");
             },
-            () => setLocationState("Ubicación no disponible · vista de Madrid"),
+            () => setLocationState("Ubicación no disponible · vista Zona Centro"),
             { enableHighAccuracy: true, timeout: 9000, maximumAge: 300000 },
           );
         } else {
@@ -346,64 +361,75 @@ export default function Dashboard() {
   }, [requestForecast]);
 
   useEffect(() => {
-    if (!mapReady || !situationLayerRef.current || !mapRef.current) return;
-    const map = mapRef.current;
-    situationLayerRef.current.eachLayer((layer: any) => {
-      const visible = activeKinds[layer.__focoKind as StatusKind];
-      if (visible && !map.hasLayer(layer)) layer.addTo(map);
-      if (!visible && map.hasLayer(layer)) situationLayerRef.current.removeLayer(layer);
-    });
-
-    // Re-create removed points so toggles remain reversible.
-    const existingNames = new Set<string>();
-    situationLayerRef.current.eachLayer((layer: any) => {
-      if (layer.__focoName) existingNames.add(layer.__focoName);
-    });
+    if (!mapReady || !situationLayerRef.current || !window.L) return;
     const L = window.L;
-    points.forEach((point) => {
-      if (!activeKinds[point.kind] || existingNames.has(point.name)) return;
+    situationLayerRef.current.clearLayers();
+
+    displayRegion.points.forEach((point) => {
+      if (!activeKinds[point.kind]) return;
       const meta = kindMeta[point.kind];
       const marker = L.marker([point.lat, point.lon], {
         icon: L.divIcon({
           className: "foco-map-icon",
-          html: `<span class="status-marker status-marker--${point.kind}" aria-hidden="true">${meta.icon}</span>`,
+          html: `<span class="status-marker status-marker--${point.kind}" aria-hidden="true"><b>${meta.icon}</b></span>`,
           iconSize: [34, 34],
           iconAnchor: [17, 17],
         }),
       });
-      marker.__focoKind = point.kind;
-      marker.__focoName = point.name;
       marker
         .bindPopup(
-          `<div class="foco-popup"><span class="popup-kicker" style="color:${meta.color}">${meta.label}</span><strong>${point.name}</strong><p>${point.detail}</p><small>Fuente: parte oficial Comunidad de Madrid</small></div>`,
+          `<div class="foco-popup"><span class="popup-kicker" style="color:${meta.color}">${meta.label} · ${escapeHtml(point.province)}</span><strong>${escapeHtml(point.name)}</strong><p>${escapeHtml(point.detail)}</p><small>${escapeHtml(point.sourceLabel)} · ${escapeHtml(point.sourceUpdatedAt)}</small></div>`,
           { closeButton: false, offset: [0, -9] },
         )
         .on("click", () => requestForecast(point.lat, point.lon, point.name))
         .addTo(situationLayerRef.current);
     });
-  }, [activeKinds, mapReady, requestForecast]);
+  }, [activeKinds, displayRegion.points, mapReady, requestForecast]);
+
+  useEffect(() => {
+    if (!mapReady || !fireAreaLayerRef.current || !window.L) return;
+    const L = window.L;
+    fireAreaLayerRef.current.clearLayers();
+    displayRegion.fires.forEach((fire) => {
+      const circle = L.circle([fire.lat, fire.lon], {
+        radius: fire.radiusKm * 1000,
+        color: "#e74731",
+        weight: 2,
+        dashArray: "7 7",
+        fillColor: "#ff6a4d",
+        fillOpacity: 0.1,
+      });
+      circle
+        .bindPopup(
+          `<div class="foco-popup"><span class="popup-kicker" style="color:#e74731">${escapeHtml(fire.level)} · ${escapeHtml(fire.provinces)}</span><strong>${escapeHtml(fire.name)}</strong><p>${escapeHtml(fire.status)}. ${escapeHtml(fire.detail)}</p><small>Zona orientativa, no perímetro · ${escapeHtml(fire.sourceLabel)} · ${escapeHtml(fire.sourceUpdatedAt)}</small></div>`,
+          { closeButton: false },
+        )
+        .on("click", () => requestForecast(fire.lat, fire.lon, fire.name))
+        .addTo(fireAreaLayerRef.current);
+    });
+  }, [displayRegion.fires, mapReady, requestForecast]);
 
   useEffect(() => {
     if (!mapReady || !airLayerRef.current || !window.L) return;
     const L = window.L;
     airLayerRef.current.clearLayers();
-    airStations.forEach((station) => {
+    displayAirStations.forEach((station) => {
+      const markerText = station.index ? String(station.index) : "·";
       const icon = L.divIcon({
         className: "foco-map-icon",
-        html: `<span class="air-marker" style="--air:${station.color}"><b>${station.value === null ? "—" : Math.round(station.value)}</b></span>`,
+        html: `<span class="air-marker" style="--air:${escapeHtml(station.color)}"><b>${markerText}</b></span>`,
         iconSize: [38, 38],
         iconAnchor: [19, 19],
       });
       L.marker([station.lat, station.lon], { icon })
         .bindPopup(
-          `<div class="foco-popup"><span class="popup-kicker" style="color:${station.color}">Calidad ${station.label}</span><strong>${station.name}</strong><p>${station.pollutant || "Sin dato"}${station.value === null ? "" : ` · ${station.value} µg/m³`}</p><small>${station.hour ? `Dato provisional · ${station.hour} h` : "Sin lectura reciente"} · Red oficial</small></div>`,
+          `<div class="foco-popup"><span class="popup-kicker" style="color:${escapeHtml(station.color)}">ICA ${station.index || "—"} · ${escapeHtml(station.label)}</span><strong>${escapeHtml(station.name)}</strong><p>Contaminante dominante: ${escapeHtml(station.pollutant || "sin dato")}${station.incomplete ? " · índice con datos parciales" : ""}</p><small>${escapeHtml(station.hour || "Sin lectura reciente")} · MITECO, dato provisional</small></div>`,
           { closeButton: false, offset: [0, -10] },
         )
         .on("click", () => requestForecast(station.lat, station.lon, station.name))
         .addTo(airLayerRef.current);
     });
-    if (airVisible && !mapRef.current.hasLayer(airLayerRef.current)) airLayerRef.current.addTo(mapRef.current);
-  }, [airStations, airVisible, mapReady, requestForecast]);
+  }, [displayAirStations, mapReady, requestForecast]);
 
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
@@ -416,7 +442,19 @@ export default function Dashboard() {
     toggleLayer(airLayerRef.current, airVisible);
     toggleLayer(heatLayerRef.current, heatVisible);
     toggleLayer(burntLayerRef.current, burntVisible);
-  }, [airVisible, burntVisible, heatVisible, mapReady]);
+    toggleLayer(smokeLayerRef.current, smokeVisible);
+    toggleLayer(fireAreaLayerRef.current, fireAreasVisible);
+    toggleLayer(userMarkerRef.current, userVisible);
+  }, [airVisible, burntVisible, fireAreasVisible, heatVisible, mapReady, smokeVisible, userVisible]);
+
+  useEffect(() => {
+    const date = layerTime.slice(0, 10);
+    heatLayerRef.current?.setParams({ time: date });
+    burntLayerRef.current?.setParams({ time: date });
+    smokeLayerRef.current?.setUrl(
+      `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_Aerosol_Type_Deep_Blue_Best_Estimate/default/${date}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.png`,
+    );
+  }, [layerTime, mapReady]);
 
   const focusPoint = (point: SituationPoint) => {
     mapRef.current?.setView([point.lat, point.lon], 12);
@@ -425,11 +463,16 @@ export default function Dashboard() {
 
   const locateMe = () => {
     if (!navigator.geolocation || !mapRef.current) return;
+    setUserVisible(true);
     setLocationState("Buscando tu posición…");
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const { latitude, longitude } = position.coords;
         mapRef.current.setView([latitude, longitude], 12);
+        if (userMarkerRef.current) {
+          userMarkerRef.current.setLatLng([latitude, longitude]);
+          userMarkerRef.current.addTo(mapRef.current);
+        }
         setLocationState("Centrado en tu posición");
       },
       () => setLocationState("No se pudo acceder a tu posición"),
@@ -437,34 +480,56 @@ export default function Dashboard() {
     );
   };
 
-  const fitFire = () => {
+  const fitFires = () => {
     if (!mapRef.current || !window.L) return;
     mapRef.current.fitBounds(
-      window.L.latLngBounds(
-        points
-          .filter((point) => point.kind !== "acogida")
-          .map((point) => [point.lat, point.lon]),
-      ),
-      { padding: [34, 34] },
+      window.L.latLngBounds(displayRegion.fires.map((fire) => [fire.lat, fire.lon])),
+      { padding: [42, 42] },
     );
+  };
+
+  const goOlder = () => {
+    if (!snapshots.length) return;
+    setSnapshotIndex((current) =>
+      current === null ? snapshots.length - 1 : Math.max(0, current - 1),
+    );
+  };
+
+  const goNewer = () => {
+    if (snapshotIndex === null) return;
+    setSnapshotIndex(snapshotIndex >= snapshots.length - 1 ? null : snapshotIndex + 1);
+  };
+
+  const toggleKind = (kind: StatusKind) => {
+    setActiveKinds((previous) => ({ ...previous, [kind]: !previous[kind] }));
   };
 
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div className="brand" aria-label="FOCO Madrid">
+        <div className="brand" aria-label="FOCO Zona Centro">
           <span className="brand-mark"><i></i></span>
           <span>
             <b>FOCO</b>
-            <small>MADRID</small>
+            <small>CENTRO</small>
           </span>
         </div>
-        <div className="top-status">
-          <span className="live-dot"></span>
-          <span>Seguimiento activo</span>
-          <i></i>
-          <span className="desktop-only">Fuentes oficiales + satélite</span>
+
+        <div className={`top-status ${isLive ? "is-live" : "is-history"}`}>
+          <div className="status-reading" aria-live="polite">
+            <span className="live-dot"></span>
+            <span>
+              <b>{isLive ? "Seguimiento activo" : "Snapshot"}</b>
+              <small>{isLive ? "Fuentes oficiales + satélite" : formatSnapshotTime(selectedSnapshot?.capturedAt || "")}</small>
+            </span>
+          </div>
+          <nav className="snapshot-nav" aria-label="Navegar por los snapshots horarios">
+            <button onClick={goOlder} disabled={!snapshots.length || snapshotIndex === 0} title="Snapshot anterior" aria-label="Snapshot anterior">&lt;</button>
+            <button onClick={goNewer} disabled={isLive} title="Snapshot siguiente" aria-label="Snapshot siguiente">&gt;</button>
+            <button onClick={() => setSnapshotIndex(null)} disabled={isLive} title="Volver al mapa en vivo" aria-label="Volver al mapa en vivo">&gt;&gt;</button>
+          </nav>
         </div>
+
         <a className="emergency-button" href="tel:112" aria-label="Llamar a emergencias 112">
           <span>Emergencias</span>
           <b>112</b>
@@ -475,112 +540,118 @@ export default function Dashboard() {
         <aside className="sidebar">
           <div className="sidebar-scroll">
             <div className="eyebrow-row">
-              <span className="eyebrow">SITUACIÓN ACTUAL</span>
-              <span className="refresh-time">Parte: {liveStatus.lastUpdated}</span>
+              <span className="eyebrow">{isLive ? "SITUACIÓN ACTUAL" : "VISTA HISTÓRICA"}</span>
+              <span className="refresh-time">
+                {isLive ? `Parte: ${displayStatus.lastUpdated}` : formatSnapshotTime(selectedSnapshot?.capturedAt || "")}
+              </span>
             </div>
 
             <section className="alert-card">
               <div className="alert-level"><span>3</span></div>
               <div>
                 <span className="alert-kicker">EMERGENCIA DE INTERÉS NACIONAL</span>
-                <h1>Incendio forestal Sierra Oeste</h1>
-                <p>Los incendios de Villa del Prado, San Martín de Valdeiglesias y Almorox se tratan como un único incendio.</p>
+                <h1>Incendios forestales · Zona Centro</h1>
+                <p>Madrid, Ávila, Toledo y Guadalajara en una única vista operacional y satelital.</p>
               </div>
-              <a href={OFFICIAL_URL} target="_blank" rel="noreferrer">Parte oficial ↗</a>
+              <a href={DSN_URL} target="_blank" rel="noreferrer">Parte nacional ↗</a>
             </section>
 
             <div className="metric-grid" aria-label="Resumen de afectaciones">
-              <button className={activeList === "evacuado" ? "active" : ""} onClick={() => setActiveList("evacuado")}>
-                <strong>{liveStatus.evacuated.length || 9}</strong>
-                <span>evacuados</span>
-              </button>
-              <button className={activeList === "confinado" ? "active" : ""} onClick={() => setActiveList("confinado")}>
-                <strong>2</strong>
-                <span>confinados</span>
-              </button>
-              <button className={activeList === "acogida" ? "active" : ""} onClick={() => setActiveList("acogida")}>
-                <strong>{liveStatus.shelters.length || 13}</strong>
-                <span>acogida</span>
-              </button>
-              <div>
-                <strong>{liveStatus.roads.length || 10}</strong>
-                <span>carreteras</span>
-              </div>
+              {(["evacuado", "confinado", "acogida", "seguimiento"] as StatusKind[]).map((kind) => (
+                <button
+                  key={kind}
+                  className={activeList === kind ? "active" : ""}
+                  onClick={() => setActiveList(kind)}
+                >
+                  <strong>{counts[kind]}</strong>
+                  <span>{kind === "evacuado" ? "evacuación" : kind === "confinado" ? "confinado" : kind === "acogida" ? "acogida" : "seguimiento"}</span>
+                </button>
+              ))}
             </div>
+            <p className="roads-summary">{displayStatus.roads.length} carreteras señaladas en el parte de Madrid</p>
 
             <section className="location-section">
               <div className="section-title">
-                <h2>{kindMeta[activeList].label}{activeList === "evacuado" ? "s" : activeList === "confinado" ? "s" : ""}</h2>
+                <h2>{kindMeta[activeList].plural}</h2>
                 <button
                   className={`layer-switch layer-switch--${activeList}`}
                   aria-pressed={activeKinds[activeList]}
-                  onClick={() => setActiveKinds((previous) => ({ ...previous, [activeList]: !previous[activeList] }))}
+                  onClick={() => toggleKind(activeList)}
                 >
                   {activeKinds[activeList] ? "Visible" : "Oculto"}
                 </button>
               </div>
               <div className="location-list">
                 {visiblePoints.map((point) => (
-                  <button key={point.name} onClick={() => focusPoint(point)}>
+                  <button key={point.id} onClick={() => focusPoint(point)}>
                     <span className={`list-symbol list-symbol--${point.kind}`}>{kindMeta[point.kind].icon}</span>
                     <span>
                       <b>{point.name}</b>
-                      <small>{point.kind === "acogida" ? "Centro habilitado" : point.kind === "confinado" ? "Permanecer a resguardo" : "Evacuación comunicada"}</small>
+                      <small>{point.province} · {point.sourceUpdatedAt}</small>
                     </span>
                     <i>⌖</i>
                   </button>
                 ))}
+                {!visiblePoints.length && <p className="empty-list">No hay puntos de este tipo en la vista seleccionada.</p>}
               </div>
             </section>
 
             <section className="sources-card">
               <div>
-                <span className="eyebrow">CANALES EN DIRECTO</span>
-                <span className="verified">Verificados</span>
+                <span className="eyebrow">FUENTES EN DIRECTO</span>
+                <span className="verified">Oficiales</span>
               </div>
               <a href="https://x.com/112cmadrid" target="_blank" rel="noreferrer">
                 <span className="source-icon">X</span>
                 <span><b>@112cmadrid</b><small>Avisos operativos y ES-Alert</small></span>
                 <i>↗</i>
               </a>
+              <a href={DSN_URL} target="_blank" rel="noreferrer">
+                <span className="source-icon source-icon--es">ES</span>
+                <span><b>Seguridad Nacional</b><small>Situación consolidada interregional</small></span>
+                <i>↗</i>
+              </a>
+              <a href={CLM_URL} target="_blank" rel="noreferrer">
+                <span className="source-icon source-icon--clm">CLM</span>
+                <span><b>Castilla-La Mancha</b><small>La Mierla y Sierra Norte</small></span>
+                <i>↗</i>
+              </a>
               <a href={OFFICIAL_URL} target="_blank" rel="noreferrer">
                 <span className="source-icon source-icon--cm">CM</span>
-                <span><b>Comunidad de Madrid</b><small>Parte consolidado de la emergencia</small></span>
+                <span><b>Comunidad de Madrid</b><small>Parte autonómico de la emergencia</small></span>
+                <i>↗</i>
+              </a>
+              <a href={MITECO_ICA_URL} target="_blank" rel="noreferrer">
+                <span className="source-icon source-icon--air">ICA</span>
+                <span><b>MITECO · calidad del aire</b><small>Red nacional, actualización horaria</small></span>
                 <i>↗</i>
               </a>
               <a href="https://forest-fire.emergency.copernicus.eu/apps/effis_current_situation/" target="_blank" rel="noreferrer">
                 <span className="source-icon source-icon--eu">EU</span>
-                <span><b>Copernicus EFFIS</b><small>Detección y superficie por satélite</small></span>
+                <span><b>Copernicus EFFIS</b><small>Calor y superficie detectada por satélite</small></span>
+                <i>↗</i>
+              </a>
+              <a href="https://gibs.earthdata.nasa.gov/" target="_blank" rel="noreferrer">
+                <span className="source-icon source-icon--nasa">NASA</span>
+                <span><b>NASA GIBS · VIIRS</b><small>Tipo de aerosol: humo rojo, humo alto violeta</small></span>
                 <i>↗</i>
               </a>
             </section>
 
             <p className="safety-note">
-              Este visor es informativo. Ante una emergencia sigue ES-Alert, las instrucciones oficiales y llama al 112.
+              Visor informativo. Los círculos rojos son zonas orientativas, no perímetros. Ante una emergencia sigue ES-Alert, las instrucciones oficiales y llama al 112.
             </p>
           </div>
         </aside>
 
-        <section className="map-pane" aria-label="Mapa de incendios de Madrid">
+        <section className="map-pane" aria-label="Mapa de incendios de la Zona Centro">
           <div ref={mapNodeRef} className="map-canvas" />
           {!mapReady && !mapError && <div className="map-loading"><span></span><b>Preparando el mapa en directo…</b></div>}
           {mapError && <div className="map-error"><b>{mapError}</b><p>Comprueba tu conexión y vuelve a cargar.</p></div>}
 
-          <div className="map-toolbar" aria-label="Capas del mapa">
-            <button className={heatVisible ? "active fire" : ""} onClick={() => setHeatVisible(!heatVisible)}>
-              <span></span> Calor VIIRS
-            </button>
-            <button className={burntVisible ? "active burnt" : ""} onClick={() => setBurntVisible(!burntVisible)}>
-              <span></span> Superficie EFFIS
-            </button>
-            <button className={airVisible ? "active air" : ""} onClick={() => setAirVisible(!airVisible)}>
-              <span></span> Calidad del aire
-            </button>
-          </div>
-
           <div className="map-actions">
             <button onClick={locateMe} title="Centrar en mi posición" aria-label="Centrar en mi posición">◎</button>
-            <button onClick={fitFire}>Ver incendio</button>
+            <button onClick={fitFires}>Ver Zona Centro</button>
           </div>
 
           <div className="position-pill">
@@ -588,26 +659,57 @@ export default function Dashboard() {
             {locationState}
           </div>
 
-          <div className="map-legend">
-            <b>LEYENDA</b>
-            <span><i className="legend-dot legend-dot--evacuado"></i> Evacuado</span>
-            <span><i className="legend-dot legend-dot--confinado"></i> Confinado</span>
-            <span><i className="legend-dot legend-dot--acogida"></i> Acogida</span>
-            <span><i className="legend-air"></i> Aire</span>
-          </div>
+          <section className={`map-legend ${panelOpen ? "forecast-open" : ""}`} aria-label="Leyenda y visibilidad de capas">
+            <div className="legend-heading">
+              <b>LEYENDA</b>
+              <small>Pulsa para ocultar o mostrar</small>
+            </div>
+            <div className="legend-items">
+              <button aria-pressed={activeKinds.evacuado} onClick={() => toggleKind("evacuado")}>
+                <i className="legend-dot legend-dot--evacuado"></i><span>Evacuación</span><em>{activeKinds.evacuado ? "ON" : "OFF"}</em>
+              </button>
+              <button aria-pressed={activeKinds.confinado} onClick={() => toggleKind("confinado")}>
+                <i className="legend-dot legend-dot--confinado"></i><span>Confinamiento</span><em>{activeKinds.confinado ? "ON" : "OFF"}</em>
+              </button>
+              <button aria-pressed={activeKinds.acogida} onClick={() => toggleKind("acogida")}>
+                <i className="legend-dot legend-dot--acogida"></i><span>Acogida</span><em>{activeKinds.acogida ? "ON" : "OFF"}</em>
+              </button>
+              <button aria-pressed={activeKinds.seguimiento} onClick={() => toggleKind("seguimiento")}>
+                <i className="legend-dot legend-dot--seguimiento"></i><span>Seguimiento</span><em>{activeKinds.seguimiento ? "ON" : "OFF"}</em>
+              </button>
+              <button aria-pressed={fireAreasVisible} onClick={() => setFireAreasVisible(!fireAreasVisible)}>
+                <i className="legend-area"></i><span>Zona incendio</span><em>{fireAreasVisible ? "ON" : "OFF"}</em>
+              </button>
+              <button aria-pressed={heatVisible} onClick={() => setHeatVisible(!heatVisible)}>
+                <i className="legend-hotspot"></i><span>Calor VIIRS</span><em>{heatVisible ? "ON" : "OFF"}</em>
+              </button>
+              <button aria-pressed={burntVisible} onClick={() => setBurntVisible(!burntVisible)}>
+                <i className="legend-burnt"></i><span>Área EFFIS</span><em>{burntVisible ? "ON" : "OFF"}</em>
+              </button>
+              <button aria-pressed={smokeVisible} onClick={() => setSmokeVisible(!smokeVisible)}>
+                <i className="legend-smoke"></i><span>Humo VIIRS</span><em>{smokeVisible ? "ON" : "OFF"}</em>
+              </button>
+              <button aria-pressed={airVisible} onClick={() => setAirVisible(!airVisible)}>
+                <i className="legend-air"></i><span>Sensor de aire</span><em>{airVisible ? "ON" : "OFF"}</em>
+              </button>
+              <button aria-pressed={userVisible} onClick={() => setUserVisible(!userVisible)}>
+                <i className="legend-user"></i><span>Tu posición</span><em>{userVisible ? "ON" : "OFF"}</em>
+              </button>
+            </div>
+          </section>
 
           {!panelOpen && (
             <button className="forecast-hint" onClick={() => requestForecast(40.4168, -3.7038, "Madrid")}>
               <span>↘</span>
               <b>Pulsa cualquier punto del mapa</b>
-              <small>Verás sol, viento y lluvia por horas</small>
+              <small>Previsión horaria de sol, viento y lluvia</small>
             </button>
           )}
 
           <section className={`forecast-panel ${panelOpen ? "open" : ""}`} aria-live="polite">
             <div className="forecast-heading">
               <div>
-                <span className="eyebrow">METEOROLOGÍA DEL PUNTO</span>
+                <span className="eyebrow">PREVISIÓN DEL PUNTO</span>
                 <h2>{selectedPoint?.label || "Punto seleccionado"}</h2>
                 {selectedPoint && <small>{selectedPoint.lat.toFixed(4)}, {selectedPoint.lon.toFixed(4)} · Open‑Meteo</small>}
               </div>
@@ -616,33 +718,38 @@ export default function Dashboard() {
 
             <div className="hourly-strip">
               {forecastState === "loading" &&
-                Array.from({ length: 8 }).map((_, index) => <div className="hour-card hour-card--loading" key={index}></div>)}
+                Array.from({ length: 7 }).map((_, index) => <div className="hour-card hour-card--loading" key={index}></div>)}
               {forecastState === "error" && (
                 <div className="forecast-message">No se pudo obtener la previsión. Pulsa otro punto para reintentarlo.</div>
               )}
               {forecastState === "ready" &&
                 forecast.map((hour, index) => {
                   const date = new Date(hour.time);
-                  const sunIcon = hour.rainProbability >= 55 ? "☂" : hour.cloud >= 70 ? "☁" : hour.cloud >= 35 ? "◒" : "☀";
+                  const weatherIcon = hour.rainProbability >= 55 ? "☂" : hour.cloud >= 70 ? "☁" : hour.cloud >= 35 ? "◒" : "☀";
                   return (
-                    <div className={`hour-card ${index === 0 ? "now" : ""}`} key={hour.time}>
+                    <article className={`hour-card ${index === 0 ? "now" : ""}`} key={hour.time}>
                       <div className="hour-top">
-                        <b>{index === 0 ? "Ahora" : date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}</b>
-                        <span>{sunIcon}</span>
+                        <span>
+                          <b>{index === 0 ? "Ahora" : date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}</b>
+                          <small>{date.toLocaleDateString("es-ES", { weekday: "short", day: "numeric" })}</small>
+                        </span>
+                        <i>{weatherIcon}</i>
                       </div>
-                      <div className="weather-row sun">
-                        <span>☀</span>
-                        <p><small>Sol</small><strong>{hour.sunMinutes} min</strong></p>
+                      <div className="weather-metrics">
+                        <div className="weather-metric sun">
+                          <i>☀</i>
+                          <span><small>Sol</small><strong>{hour.sunMinutes} min</strong></span>
+                        </div>
+                        <div className="weather-metric wind">
+                          <i style={{ transform: `rotate(${hour.windDirection}deg)` }}>↑</i>
+                          <span><small>Viento {compass(hour.windDirection)}</small><strong>{hour.wind} km/h</strong></span>
+                        </div>
+                        <div className="weather-metric rain">
+                          <i>●</i>
+                          <span><small>Lluvia</small><strong>{hour.rainProbability}% <em>{hour.rain.toFixed(1)} mm</em></strong></span>
+                        </div>
                       </div>
-                      <div className="weather-row wind">
-                        <span style={{ transform: `rotate(${hour.windDirection}deg)` }}>↑</span>
-                        <p><small>Viento {compass(hour.windDirection)}</small><strong>{hour.wind} km/h</strong></p>
-                      </div>
-                      <div className="weather-row rain">
-                        <span>●</span>
-                        <p><small>Lluvia</small><strong>{hour.rainProbability}% <em>{hour.rain.toFixed(1)} mm</em></strong></p>
-                      </div>
-                    </div>
+                    </article>
                   );
                 })}
             </div>

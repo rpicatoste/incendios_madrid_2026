@@ -1,0 +1,27 @@
+[Unit]
+Description=FOCO Centro web application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/rpica/workspace/incendios_madrid_2026
+Environment=PATH=/home/rpica/.local/node-v22/bin:/usr/local/bin:/usr/bin:/bin
+Environment=NODE_ENV=production
+Environment=NODE_EXTRA_CA_CERTS=/home/rpica/workspace/incendios_madrid_2026/ops/fnmt-components.pem
+EnvironmentFile=/home/rpica/workspace/incendios_madrid_2026/.env
+ExecStart=/home/rpica/.local/node-v22/bin/npm run start -- --hostname 127.0.0.1
+Restart=on-failure
+RestartSec=4
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/rpica/workspace/incendios_madrid_2026/data
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

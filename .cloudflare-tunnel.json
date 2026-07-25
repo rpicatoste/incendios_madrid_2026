@@ -1,0 +1,8 @@
+{
+  "url": "https://managers-brunswick-titanium-strategies.trycloudflare.com",
+  "origin": "http://127.0.0.1:3000",
+  "mode": "quick-tunnel",
+  "server": "numebox",
+  "service": "foco-cloudflared.service",
+  "note": "App deploys and restarts preserve this URL. Restarting the quick-tunnel service can create a different URL."
+}

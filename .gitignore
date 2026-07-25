@@ -21,6 +21,7 @@
 # misc
 .DS_Store
 *.pem
+!/ops/fnmt-components.pem
 
 # debug
 npm-debug.log*
@@ -40,3 +41,6 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+/data/
+/var/
+/.foco-data/

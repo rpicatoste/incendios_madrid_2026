@@ -1,0 +1,7 @@
+.git
+.next
+dist
+node_modules
+.wrangler
+.cloudflare-tunnel.json
+npm-debug.log*

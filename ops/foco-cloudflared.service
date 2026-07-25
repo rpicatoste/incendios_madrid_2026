@@ -1,0 +1,24 @@
+[Unit]
+Description=FOCO Centro TryCloudflare public tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/rpica/.local/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:3000
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/home/rpica/workspace/incendios_madrid_2026/var/cloudflared.log
+StandardError=append:/home/rpica/workspace/incendios_madrid_2026/var/cloudflared.log
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/rpica/workspace/incendios_madrid_2026/var
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+UMask=0077
+
+[Install]
+WantedBy=default.target
