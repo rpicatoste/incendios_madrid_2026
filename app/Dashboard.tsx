@@ -64,6 +64,8 @@ const OFFICIAL_URL =
 const DSN_URL = "https://www.dsn.gob.es/gl/node/32742";
 const CLM_URL =
   "https://www.castillalamancha.es/actualidad/notasdeprensa/castilla-la-mancha-moviliza-un-amplio-operativo-para-hacer-frente-los-incendios-registrados-en-la";
+const CEMS_LA_MIERLA_URL =
+  "https://mapping.emergency.copernicus.eu/activations/EMSR898/";
 const MITECO_ICA_URL = "https://ica.miteco.es/datos/ica-ultima-hora.csv";
 
 const fallbackStatus: LiveStatus = {
@@ -79,7 +81,7 @@ const fallbackStatus: LiveStatus = {
 };
 
 const kindMeta: Record<StatusKind, { label: string; plural: string; color: string; icon: string }> = {
-  evacuado: { label: "Evacuación", plural: "Evacuaciones", color: "#ff5a45", icon: "↗" },
+  evacuado: { label: "Evacuación", plural: "Evacuaciones", color: "#ff5a45", icon: "EV" },
   confinado: { label: "Confinamiento", plural: "Confinamientos", color: "#ffb33f", icon: "⌂" },
   acogida: { label: "Punto de acogida", plural: "Puntos de acogida", color: "#49b8ff", icon: "+" },
   seguimiento: { label: "Incendio en seguimiento", plural: "En seguimiento", color: "#8d62db", icon: "!" },
@@ -105,6 +107,13 @@ const compass = (degrees: number) => {
   return directions[Math.round(degrees / 45) % 8];
 };
 
+const describeSun = (hour: ForecastHour) => {
+  if (hour.sunMinutes >= 45) return "Despejado";
+  if (hour.sunMinutes >= 15) return "Con claros";
+  if (hour.cloud >= 70) return "Cubierto";
+  return "Sin sol";
+};
+
 const formatSnapshotTime = (value: string) =>
   new Intl.DateTimeFormat("es-ES", {
     day: "2-digit",
@@ -123,6 +132,9 @@ export default function Dashboard() {
   const burntLayerRef = useRef<any>(null);
   const smokeLayerRef = useRef<any>(null);
   const userMarkerRef = useRef<any>(null);
+  const canvasRendererRef = useRef<any>(null);
+  const forecastRequestRef = useRef<AbortController | null>(null);
+  const forecastCacheRef = useRef<Map<string, ForecastHour[]>>(new Map());
 
   const [liveStatus, setLiveStatus] = useState<LiveStatus>(fallbackStatus);
   const [liveAirStations, setLiveAirStations] = useState<AirStation[]>([]);
@@ -148,6 +160,7 @@ export default function Dashboard() {
   const [forecast, setForecast] = useState<ForecastHour[]>([]);
   const [forecastState, setForecastState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [panelOpen, setPanelOpen] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [activeList, setActiveList] = useState<StatusKind>("evacuado");
 
   const selectedSnapshot = snapshotIndex === null ? null : snapshots[snapshotIndex] || null;
@@ -172,23 +185,24 @@ export default function Dashboard() {
     [displayRegion.points],
   );
 
-  const refreshSnapshots = useCallback(async () => {
-    try {
-      const response = await fetch("/api/snapshots", { cache: "no-store" });
-      const data = (await response.json()) as { snapshots?: SnapshotRecord[] };
-      if (response.ok) setSnapshots(data.snapshots || []);
-    } catch {
-      // El mapa vivo sigue funcionando aunque el histórico local esté iniciándose.
-    }
-  }, []);
-
   const requestForecast = useCallback(async (lat: number, lon: number, label?: string) => {
+    const cacheKey = `${lat.toFixed(3)},${lon.toFixed(3)}`;
     setSelectedPoint({
       lat,
       lon,
       label: label || `${lat.toFixed(4)}, ${lon.toFixed(4)}`,
     });
     setPanelOpen(true);
+    const cachedForecast = forecastCacheRef.current.get(cacheKey);
+    if (cachedForecast) {
+      setForecast(cachedForecast);
+      setForecastState("ready");
+      return;
+    }
+
+    forecastRequestRef.current?.abort();
+    const controller = new AbortController();
+    forecastRequestRef.current = controller;
     setForecastState("loading");
     try {
       const params = new URLSearchParams({
@@ -199,7 +213,9 @@ export default function Dashboard() {
         forecast_days: "2",
         timezone: "auto",
       });
-      const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`);
+      const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`, {
+        signal: controller.signal,
+      });
       if (!response.ok) throw new Error("Forecast unavailable");
       const data = await response.json();
       const now = Date.now() - 60 * 60 * 1000;
@@ -214,22 +230,31 @@ export default function Dashboard() {
           windDirection: data.hourly.wind_direction_10m[index] ?? 0,
         }))
         .filter((row: ForecastHour) => new Date(row.time).getTime() >= now)
-        .slice(0, 16);
+        .slice(0, 12);
+      if (forecastCacheRef.current.size >= 12) {
+        const oldestKey = forecastCacheRef.current.keys().next().value;
+        if (oldestKey) forecastCacheRef.current.delete(oldestKey);
+      }
+      forecastCacheRef.current.set(cacheKey, rows);
       setForecast(rows);
       setForecastState("ready");
-    } catch {
+    } catch (error) {
+      if ((error as Error).name === "AbortError") return;
       setForecast([]);
       setForecastState("error");
+    } finally {
+      if (forecastRequestRef.current === controller) forecastRequestRef.current = null;
     }
   }, []);
 
   useEffect(() => {
     let active = true;
     const refreshLiveData = async () => {
-      const [statusResult, airResult, regionResult] = await Promise.allSettled([
-        fetch("/api/status", { cache: "no-store" }).then((response) => response.json()),
-        fetch("/api/air", { cache: "no-store" }).then((response) => response.json()),
-        fetch("/api/region", { cache: "no-store" }).then((response) => response.json()),
+      const [statusResult, airResult, regionResult, snapshotsResult] = await Promise.allSettled([
+        fetch("/api/status").then((response) => response.json()),
+        fetch("/api/air").then((response) => response.json()),
+        fetch("/api/region").then((response) => response.json()),
+        fetch("/api/snapshots", { cache: "no-store" }).then((response) => response.json()),
       ]);
       if (!active) return;
 
@@ -245,11 +270,11 @@ export default function Dashboard() {
       setLiveStatus(status);
       setLiveAirStations(airStations);
       setLiveRegion(region);
-
-      refreshSnapshots();
+      if (snapshotsResult.status === "fulfilled") {
+        setSnapshots((snapshotsResult.value as { snapshots?: SnapshotRecord[] }).snapshots || []);
+      }
     };
 
-    refreshSnapshots();
     refreshLiveData();
     const interval = window.setInterval(refreshLiveData, 5 * 60 * 1000);
     window.addEventListener("online", refreshLiveData);
@@ -260,7 +285,18 @@ export default function Dashboard() {
     };
     // Los valores de fallback se usan sólo si una fuente falla durante esta llamada.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshSnapshots]);
+  }, []);
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileSidebarOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+      forecastRequestRef.current?.abort();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -273,13 +309,17 @@ export default function Dashboard() {
           zoomControl: false,
           attributionControl: true,
           minZoom: 7,
+          preferCanvas: true,
         }).setView([40.4168, -3.7038], 8);
 
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
           maxZoom: 18,
+          updateWhenIdle: true,
+          keepBuffer: 2,
           attribution: "© OpenStreetMap",
         }).addTo(map);
         L.control.zoom({ position: "bottomright" }).addTo(map);
+        canvasRendererRef.current = L.canvas({ padding: 0.3, tolerance: 8 });
 
         situationLayerRef.current = L.layerGroup().addTo(map);
         fireAreaLayerRef.current = L.layerGroup().addTo(map);
@@ -293,6 +333,9 @@ export default function Dashboard() {
             version: "1.1.1",
             time: new Date().toISOString().slice(0, 10),
             opacity: 0.78,
+            updateWhenIdle: true,
+            updateWhenZooming: false,
+            keepBuffer: 1,
             attribution: "Copernicus EFFIS / NASA VIIRS",
           })
           .addTo(map);
@@ -305,6 +348,9 @@ export default function Dashboard() {
             version: "1.1.1",
             time: new Date().toISOString().slice(0, 10),
             opacity: 0.48,
+            updateWhenIdle: true,
+            updateWhenZooming: false,
+            keepBuffer: 1,
             attribution: "Copernicus EFFIS / GWIS",
           })
           .addTo(map);
@@ -315,6 +361,9 @@ export default function Dashboard() {
             maxNativeZoom: 6,
             maxZoom: 18,
             opacity: 0.52,
+            updateWhenIdle: true,
+            updateWhenZooming: false,
+            keepBuffer: 1,
             attribution: "NASA GIBS / VIIRS Deep Blue",
           },
         ).addTo(map);
@@ -391,17 +440,26 @@ export default function Dashboard() {
     const L = window.L;
     fireAreaLayerRef.current.clearLayers();
     displayRegion.fires.forEach((fire) => {
+      const areaLabel = fire.areaHectares
+        ? ` · ${fire.areaHectares.toLocaleString("es-ES")} ha`
+        : "";
       const circle = L.circle([fire.lat, fire.lon], {
+        renderer: canvasRendererRef.current,
         radius: fire.radiusKm * 1000,
         color: "#e74731",
         weight: 2,
         dashArray: "7 7",
         fillColor: "#ff6a4d",
-        fillOpacity: 0.1,
+        fillOpacity: 0.16,
       });
       circle
+        .bindTooltip(`${escapeHtml(fire.name)}${areaLabel}`, {
+          permanent: true,
+          direction: "center",
+          className: "fire-area-label",
+        })
         .bindPopup(
-          `<div class="foco-popup"><span class="popup-kicker" style="color:#e74731">${escapeHtml(fire.level)} · ${escapeHtml(fire.provinces)}</span><strong>${escapeHtml(fire.name)}</strong><p>${escapeHtml(fire.status)}. ${escapeHtml(fire.detail)}</p><small>Zona orientativa, no perímetro · ${escapeHtml(fire.sourceLabel)} · ${escapeHtml(fire.sourceUpdatedAt)}</small></div>`,
+          `<div class="foco-popup"><span class="popup-kicker" style="color:#e74731">${escapeHtml(fire.level)} · ${escapeHtml(fire.provinces)}</span><strong>${escapeHtml(fire.name)}</strong><p>${escapeHtml(fire.status)}. ${fire.areaHectares ? `Superficie comunicada: ${fire.areaHectares.toLocaleString("es-ES")} ha. ` : ""}${escapeHtml(fire.detail)}</p><small>Zona orientativa, no perímetro · ${escapeHtml(fire.sourceLabel)} · ${escapeHtml(fire.sourceUpdatedAt)}</small></div>`,
           { closeButton: false },
         )
         .on("click", () => requestForecast(fire.lat, fire.lon, fire.name))
@@ -414,14 +472,15 @@ export default function Dashboard() {
     const L = window.L;
     airLayerRef.current.clearLayers();
     displayAirStations.forEach((station) => {
-      const markerText = station.index ? String(station.index) : "·";
-      const icon = L.divIcon({
-        className: "foco-map-icon",
-        html: `<span class="air-marker" style="--air:${escapeHtml(station.color)}"><b>${markerText}</b></span>`,
-        iconSize: [38, 38],
-        iconAnchor: [19, 19],
-      });
-      L.marker([station.lat, station.lon], { icon })
+      L.circleMarker([station.lat, station.lon], {
+        renderer: canvasRendererRef.current,
+        radius: 10,
+        color: "#ffffff",
+        weight: 3,
+        fillColor: station.color,
+        fillOpacity: 0.88,
+        bubblingMouseEvents: false,
+      })
         .bindPopup(
           `<div class="foco-popup"><span class="popup-kicker" style="color:${escapeHtml(station.color)}">ICA ${station.index || "—"} · ${escapeHtml(station.label)}</span><strong>${escapeHtml(station.name)}</strong><p>Contaminante dominante: ${escapeHtml(station.pollutant || "sin dato")}${station.incomplete ? " · índice con datos parciales" : ""}</p><small>${escapeHtml(station.hour || "Sin lectura reciente")} · MITECO, dato provisional</small></div>`,
           { closeButton: false, offset: [0, -10] },
@@ -457,6 +516,7 @@ export default function Dashboard() {
   }, [layerTime, mapReady]);
 
   const focusPoint = (point: SituationPoint) => {
+    setMobileSidebarOpen(false);
     mapRef.current?.setView([point.lat, point.lon], 12);
     requestForecast(point.lat, point.lon, point.name);
   };
@@ -508,6 +568,16 @@ export default function Dashboard() {
     <main className="app-shell">
       <header className="topbar">
         <div className="brand" aria-label="FOCO Zona Centro">
+          <button
+            className="mobile-menu-button"
+            type="button"
+            aria-label={mobileSidebarOpen ? "Cerrar panel de situación" : "Abrir panel de situación"}
+            aria-expanded={mobileSidebarOpen}
+            aria-controls="situation-sidebar"
+            onClick={() => setMobileSidebarOpen((open) => !open)}
+          >
+            <i></i><i></i><i></i>
+          </button>
           <span className="brand-mark"><i></i></span>
           <span>
             <b>FOCO</b>
@@ -537,8 +607,15 @@ export default function Dashboard() {
       </header>
 
       <section className="workspace">
-        <aside className="sidebar">
+        <aside
+          id="situation-sidebar"
+          className={`sidebar ${mobileSidebarOpen ? "mobile-open" : ""}`}
+        >
           <div className="sidebar-scroll">
+            <div className="mobile-sidebar-heading">
+              <b>Situación y fuentes</b>
+              <button type="button" onClick={() => setMobileSidebarOpen(false)} aria-label="Cerrar panel">×</button>
+            </div>
             <div className="eyebrow-row">
               <span className="eyebrow">{isLive ? "SITUACIÓN ACTUAL" : "VISTA HISTÓRICA"}</span>
               <span className="refresh-time">
@@ -616,6 +693,11 @@ export default function Dashboard() {
                 <span><b>Castilla-La Mancha</b><small>La Mierla y Sierra Norte</small></span>
                 <i>↗</i>
               </a>
+              <a href={CEMS_LA_MIERLA_URL} target="_blank" rel="noreferrer">
+                <span className="source-icon source-icon--eu">EU</span>
+                <span><b>Copernicus EMSR898</b><small>Cartografía satelital de La Mierla</small></span>
+                <i>↗</i>
+              </a>
               <a href={OFFICIAL_URL} target="_blank" rel="noreferrer">
                 <span className="source-icon source-icon--cm">CM</span>
                 <span><b>Comunidad de Madrid</b><small>Parte autonómico de la emergencia</small></span>
@@ -643,6 +725,14 @@ export default function Dashboard() {
             </p>
           </div>
         </aside>
+        {mobileSidebarOpen && (
+          <button
+            type="button"
+            className="sidebar-backdrop"
+            onClick={() => setMobileSidebarOpen(false)}
+            aria-label="Cerrar panel de situación"
+          />
+        )}
 
         <section className="map-pane" aria-label="Mapa de incendios de la Zona Centro">
           <div ref={mapNodeRef} className="map-canvas" />
@@ -651,7 +741,7 @@ export default function Dashboard() {
 
           <div className="map-actions">
             <button onClick={locateMe} title="Centrar en mi posición" aria-label="Centrar en mi posición">◎</button>
-            <button onClick={fitFires}>Ver Zona Centro</button>
+            <button onClick={fitFires}>Ver incendios</button>
           </div>
 
           <div className="position-pill">
@@ -709,9 +799,16 @@ export default function Dashboard() {
           <section className={`forecast-panel ${panelOpen ? "open" : ""}`} aria-live="polite">
             <div className="forecast-heading">
               <div>
-                <span className="eyebrow">PREVISIÓN DEL PUNTO</span>
-                <h2>{selectedPoint?.label || "Punto seleccionado"}</h2>
-                {selectedPoint && <small>{selectedPoint.lat.toFixed(4)}, {selectedPoint.lon.toFixed(4)} · Open‑Meteo</small>}
+                <div className="forecast-title-row">
+                  <span className="eyebrow">PREVISIÓN DEL PUNTO</span>
+                  {selectedPoint && (
+                    <small>{selectedPoint.lat.toFixed(4)}, {selectedPoint.lon.toFixed(4)} · Open‑Meteo</small>
+                  )}
+                </div>
+                {selectedPoint &&
+                  selectedPoint.label !== `${selectedPoint.lat.toFixed(4)}, ${selectedPoint.lon.toFixed(4)}` && (
+                    <h2>{selectedPoint.label}</h2>
+                  )}
               </div>
               <button onClick={() => setPanelOpen(false)} aria-label="Cerrar previsión">×</button>
             </div>
@@ -725,28 +822,24 @@ export default function Dashboard() {
               {forecastState === "ready" &&
                 forecast.map((hour, index) => {
                   const date = new Date(hour.time);
-                  const weatherIcon = hour.rainProbability >= 55 ? "☂" : hour.cloud >= 70 ? "☁" : hour.cloud >= 35 ? "◒" : "☀";
                   return (
                     <article className={`hour-card ${index === 0 ? "now" : ""}`} key={hour.time}>
                       <div className="hour-top">
-                        <span>
-                          <b>{index === 0 ? "Ahora" : date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}</b>
-                          <small>{date.toLocaleDateString("es-ES", { weekday: "short", day: "numeric" })}</small>
-                        </span>
-                        <i>{weatherIcon}</i>
+                        <b>{index === 0 ? "Ahora" : date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}</b>
+                        <small>{date.toLocaleDateString("es-ES", { weekday: "short", day: "numeric" })}</small>
                       </div>
                       <div className="weather-metrics">
                         <div className="weather-metric sun">
-                          <i>☀</i>
-                          <span><small>Sol</small><strong>{hour.sunMinutes} min</strong></span>
+                          <small>Sol</small>
+                          <strong>{describeSun(hour)}</strong>
                         </div>
                         <div className="weather-metric wind">
-                          <i style={{ transform: `rotate(${hour.windDirection}deg)` }}>↑</i>
-                          <span><small>Viento {compass(hour.windDirection)}</small><strong>{hour.wind} km/h</strong></span>
+                          <small>Viento {compass(hour.windDirection)}</small>
+                          <strong>{hour.wind} km/h</strong>
                         </div>
                         <div className="weather-metric rain">
-                          <i>●</i>
-                          <span><small>Lluvia</small><strong>{hour.rainProbability}% <em>{hour.rain.toFixed(1)} mm</em></strong></span>
+                          <small>Lluvia</small>
+                          <strong>{hour.rainProbability}% <em>{hour.rain.toFixed(1)} mm</em></strong>
                         </div>
                       </div>
                     </article>

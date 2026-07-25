@@ -20,6 +20,7 @@ export type FireIncident = {
   lat: number;
   lon: number;
   radiusKm: number;
+  areaHectares?: number;
   level: string;
   status: string;
   detail: string;
@@ -182,9 +183,10 @@ export const defaultRegionData: RegionData = {
       lat: 40.953,
       lon: -3.236,
       radiusKm: 11,
+      areaHectares: 32000,
       level: "Seguimiento",
       status: "Evolución favorable; operativo desplegado",
-      detail: "Gran incendio de la Sierra Norte de Guadalajara. La zona circular es orientativa; EFFIS muestra la superficie satelital.",
+      detail: "Gran incendio de la Sierra Norte de Guadalajara. La fuente autonómica cifra unas 32.000 ha afectadas; la zona circular es orientativa y EFFIS muestra la superficie satelital.",
       source: CLM_SOURCE,
       sourceLabel: "Gobierno de Castilla-La Mancha",
       sourceUpdatedAt: "23 jul",

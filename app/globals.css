@@ -62,6 +62,12 @@ button {
   border-right: 1px solid #d7dfda;
 }
 
+.mobile-menu-button,
+.mobile-sidebar-heading,
+.sidebar-backdrop {
+  display: none;
+}
+
 .brand-mark {
   width: 33px;
   height: 33px;
@@ -571,6 +577,7 @@ button {
   min-width: 0;
   overflow: hidden;
   background: #dfe4dc;
+  isolation: isolate;
 }
 
 .map-canvas {
@@ -594,7 +601,7 @@ button {
 }
 
 .leaflet-tile-pane {
-  filter: saturate(0.72) contrast(0.92) brightness(1.04);
+  filter: saturate(0.88) contrast(0.96) brightness(1.02);
 }
 
 .leaflet-control-attribution {
@@ -641,6 +648,22 @@ button {
   font-size: 8px;
 }
 
+.fire-area-label {
+  border: 1px solid rgba(206, 64, 43, .45) !important;
+  border-radius: 999px !important;
+  padding: 4px 8px !important;
+  background: rgba(255, 248, 244, .92) !important;
+  color: #a42f20 !important;
+  box-shadow: 0 3px 10px rgba(89, 30, 22, .12) !important;
+  font-size: 8px !important;
+  font-weight: 800 !important;
+  white-space: nowrap;
+}
+
+.fire-area-label::before {
+  display: none;
+}
+
 .foco-map-icon {
   background: transparent !important;
   border: 0 !important;
@@ -676,6 +699,16 @@ button {
 .status-marker b {
   transform: rotate(45deg);
   font-size: 13px;
+}
+
+.status-marker--evacuado b {
+  font-size: 9px;
+  letter-spacing: -0.05em;
+}
+
+.list-symbol--evacuado {
+  font-size: 9px;
+  letter-spacing: -0.04em;
 }
 
 .air-marker {
@@ -838,7 +871,7 @@ button {
   position: absolute;
   left: 16px;
   bottom: 16px;
-  z-index: 550;
+  z-index: 690;
   width: min(430px, calc(100% - 32px));
   border: 1px solid rgba(197, 208, 202, .95);
   border-radius: 12px;
@@ -850,9 +883,7 @@ button {
 }
 
 .map-legend.forecast-open {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(8px);
+  bottom: 198px;
 }
 
 .legend-heading {
@@ -1031,7 +1062,7 @@ button {
   opacity: 0;
   pointer-events: none;
   transform: translateY(25px);
-  transition: 260ms ease;
+  transition: opacity 180ms ease, transform 180ms ease;
   overflow: hidden;
   border: 1px solid #d5ded8;
   border-radius: 13px;
@@ -1041,35 +1072,57 @@ button {
 }
 
 .forecast-panel.open {
-  height: 274px;
+  height: 176px;
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
 }
 
 .forecast-heading {
-  height: 76px;
-  padding: 13px 17px;
+  height: 52px;
+  padding: 9px 13px;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid #dce3de;
 }
 
+.forecast-heading > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.forecast-title-row {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.forecast-title-row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .forecast-heading h2 {
-  margin: 4px 0 1px;
-  font-size: 17px;
+  margin: 4px 0 0;
+  font-size: 12px;
   letter-spacing: -0.03em;
+  line-height: 1;
 }
 
 .forecast-heading small {
   color: #7a8789;
-  font-size: 10px;
+  font-size: 8px;
 }
 
 .forecast-heading > button {
-  width: 27px;
-  height: 27px;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  margin-left: 10px;
   border-radius: 50%;
   border: 1px solid #d8e0db;
   background: white;
@@ -1079,22 +1132,24 @@ button {
 }
 
 .hourly-strip {
-  height: 198px;
+  height: 124px;
   display: flex;
   overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  touch-action: pan-x;
   scrollbar-width: thin;
   scrollbar-color: #c3cec7 transparent;
-  padding: 11px 14px 14px;
-  gap: 9px;
+  padding: 8px 12px 10px;
+  gap: 7px;
 }
 
 .hour-card {
-  flex: 0 0 164px;
-  min-width: 164px;
+  flex: 0 0 148px;
+  min-width: 148px;
   background: white;
   border: 1px solid #dce4df;
-  border-radius: 11px;
-  padding: 11px 12px;
+  border-radius: 9px;
+  padding: 8px 10px;
 }
 
 .hour-card.now {
@@ -1114,9 +1169,10 @@ button {
 .hour-top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding-bottom: 9px;
-  margin-bottom: 8px;
+  justify-content: flex-start;
+  gap: 7px;
+  padding-bottom: 5px;
+  margin-bottom: 4px;
   border-bottom: 1px solid #e0e6e2;
 }
 
@@ -1124,20 +1180,13 @@ button {
   border-color: rgba(255,255,255,.16);
 }
 
-.hour-top > span {
-  display: flex;
-  flex-direction: column;
-  color: inherit;
-}
-
 .hour-top b {
-  font-size: 13px;
+  font-size: 11px;
 }
 
 .hour-top small {
-  margin-top: 2px;
   color: #7d8a8c;
-  font-size: 9px;
+  font-size: 8px;
   text-transform: capitalize;
 }
 
@@ -1145,45 +1194,28 @@ button {
   color: #9eb1b2;
 }
 
-.hour-top > i {
-  font-size: 24px;
-  font-style: normal;
-  color: #f0b634;
-}
-
 .weather-metrics {
   display: grid;
-  gap: 7px;
+  gap: 2px;
 }
 
 .weather-metric {
-  display: grid;
-  grid-template-columns: 22px 1fr;
-  gap: 7px;
+  display: flex;
   align-items: center;
-  min-height: 29px;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 19px;
 }
-
-.weather-metric > i {
-  font-size: 15px;
-  font-style: normal;
-  text-align: center;
-  display: inline-block;
-}
-
-.weather-metric.sun > i { color: #e3a82e; }
-.weather-metric.wind > i { color: #4ca7cf; transform-origin: center; }
-.weather-metric.rain > i { color: #5e9ad3; font-size: 9px; }
 
 .weather-metric small,
 .weather-metric strong {
-  display: block;
   line-height: 1.12;
+  white-space: nowrap;
 }
 
 .weather-metric small {
   color: #7c888a;
-  font-size: 9px;
+  font-size: 8px;
 }
 
 .now .weather-metric small {
@@ -1191,16 +1223,17 @@ button {
 }
 
 .weather-metric strong {
-  margin-top: 3px;
-  font-size: 12px;
+  margin: 0;
+  font-size: 10px;
+  text-align: right;
 }
 
 .weather-metric em {
   font-style: normal;
   color: #869293;
   font-weight: 500;
-  margin-left: 3px;
-  font-size: 9px;
+  margin-left: 2px;
+  font-size: 7px;
 }
 
 .forecast-message {
@@ -1229,29 +1262,63 @@ button {
 
 @media (max-width: 680px) {
   .app-shell {
-    overflow: auto;
+    overflow: hidden;
   }
 
   .topbar {
-    height: 64px;
+    height: 46px;
     grid-template-columns: auto minmax(0, 1fr) auto;
     position: sticky;
     top: 0;
   }
 
   .brand {
-    border-right: 0;
-    padding: 0 8px 0 11px;
-    gap: 8px;
+    padding: 0 6px;
+    gap: 5px;
   }
 
   .brand-mark {
-    width: 28px;
+    width: 21px;
+    height: 21px;
+  }
+
+  .brand-mark::before {
+    height: 25px;
+  }
+
+  .brand-mark::after {
+    width: 25px;
+  }
+
+  .brand-mark i {
+    width: 7px;
+    height: 7px;
+    border-width: 2px;
+  }
+
+  .mobile-menu-button {
+    width: 25px;
     height: 28px;
+    padding: 6px 4px;
+    border: 0;
+    background: transparent;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    cursor: pointer;
+  }
+
+  .mobile-menu-button i {
+    display: block;
+    width: 16px;
+    height: 1.5px;
+    border-radius: 2px;
+    background: var(--ink);
   }
 
   .brand b {
-    font-size: 16px;
+    font-size: 14px;
   }
 
   .brand small {
@@ -1261,16 +1328,16 @@ button {
   .top-status {
     display: flex;
     justify-content: center;
-    gap: 5px;
-    padding: 0 3px;
+    gap: 4px;
+    padding: 0 2px;
   }
 
   .status-reading {
-    gap: 7px;
+    gap: 5px;
   }
 
   .status-reading b {
-    font-size: 8px;
+    font-size: 7px;
     white-space: nowrap;
   }
 
@@ -1279,68 +1346,120 @@ button {
   }
 
   .live-dot {
-    width: 6px;
-    height: 6px;
-    box-shadow: 0 0 0 3px rgba(255, 90, 69, .13);
+    width: 5px;
+    height: 5px;
+    box-shadow: 0 0 0 2px rgba(255, 90, 69, .13);
   }
 
   .snapshot-nav {
-    border-radius: 7px;
+    border-radius: 6px;
   }
 
   .snapshot-nav button,
   .snapshot-nav button:last-child {
-    width: 27px;
-    height: 29px;
-    font-size: 10px;
+    width: 22px;
+    height: 25px;
+    font-size: 9px;
+  }
+
+  .snapshot-nav button:last-child {
+    width: 26px;
   }
 
   .emergency-button {
-    min-width: 50px;
-    height: 37px;
-    margin-right: 8px;
-    padding: 0 10px;
+    min-width: 40px;
+    height: 32px;
+    margin-right: 5px;
+    padding: 0 8px;
     justify-content: center;
+    border-radius: 8px;
   }
 
   .emergency-button span {
     display: none;
   }
 
+  .emergency-button b {
+    font-size: 14px;
+  }
+
   .workspace {
-    height: calc(100dvh - 64px);
+    height: calc(100dvh - 46px);
     display: block;
     position: relative;
   }
 
   .sidebar {
     position: absolute;
-    z-index: 650;
-    left: 9px;
-    right: 9px;
-    top: 62px;
-    width: auto;
-    max-height: 178px;
+    z-index: 850;
+    left: 6px;
+    right: auto;
+    top: 6px;
+    bottom: 6px;
+    width: min(340px, calc(100% - 12px));
+    max-height: none;
     border: 1px solid rgba(205, 215, 209, .95);
     border-radius: 12px;
-    background: rgba(249, 251, 247, .95);
-    backdrop-filter: blur(15px);
-    box-shadow: 0 10px 35px rgba(26, 49, 51, .13);
+    background: #f8faf6;
+    box-shadow: 0 14px 42px rgba(18, 39, 41, .24);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateX(calc(-100% - 12px));
+    transition: opacity 160ms ease, transform 180ms ease, visibility 0s linear 180ms;
+    will-change: transform;
+  }
+
+  .sidebar.mobile-open {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateX(0);
+    transition-delay: 0s;
   }
 
   .sidebar-scroll {
-    padding: 10px;
+    padding: 12px 10px 18px;
   }
 
-  .sidebar .eyebrow-row,
-  .sidebar .location-section,
-  .sidebar .sources-card,
-  .sidebar .safety-note {
-    display: none;
+  .mobile-sidebar-heading {
+    position: sticky;
+    z-index: 2;
+    top: -12px;
+    margin: -12px -10px 10px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+    background: #f8faf6;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .mobile-sidebar-heading b {
+    font-size: 11px;
+  }
+
+  .mobile-sidebar-heading button {
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    background: white;
+    font-size: 17px;
+    line-height: 1;
+  }
+
+  .sidebar-backdrop {
+    position: absolute;
+    z-index: 840;
+    inset: 0;
+    border: 0;
+    display: block;
+    background: rgba(13, 31, 33, .32);
   }
 
   .alert-card {
-    margin-top: 0;
+    margin-top: 8px;
     padding: 11px;
     grid-template-columns: 34px 1fr;
     gap: 9px;
@@ -1362,7 +1481,7 @@ button {
   }
 
   .alert-card > a {
-    display: none;
+    font-size: 9px;
   }
 
   .metric-grid {
@@ -1370,7 +1489,7 @@ button {
   }
 
   .roads-summary {
-    display: none;
+    margin-bottom: 12px;
   }
 
   .metric-grid button,
@@ -1387,30 +1506,32 @@ button {
   }
 
   .map-actions {
-    right: 9px;
-    top: 10px;
-  }
-
-  .map-actions button:last-child {
-    display: none;
+    right: 6px;
+    top: 6px;
   }
 
   .position-pill {
-    left: 9px;
-    top: 10px;
-    max-width: calc(100% - 64px);
+    left: 6px;
+    top: 6px;
+    max-width: calc(100% - 142px);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .map-legend {
-    left: 7px;
-    right: 7px;
-    bottom: 7px;
+    left: 6px;
+    right: 6px;
+    bottom: 6px;
     width: auto;
-    padding: 8px;
+    padding: 7px;
     border-radius: 11px;
+    backdrop-filter: none;
+    background: rgba(255, 255, 255, .97);
+  }
+
+  .map-legend.forecast-open {
+    bottom: 190px;
   }
 
   .legend-heading {
@@ -1428,8 +1549,8 @@ button {
   .legend-items button {
     flex: 0 0 auto;
     width: auto;
-    min-width: 104px;
-    height: 34px;
+    min-width: 101px;
+    height: 31px;
   }
 
   .legend-items button span {
@@ -1437,32 +1558,61 @@ button {
   }
 
   .forecast-hint {
-    bottom: 86px;
+    bottom: 78px;
     min-width: min(280px, calc(100% - 20px));
   }
 
   .forecast-panel {
-    left: 7px;
-    right: 7px;
-    bottom: 7px;
+    left: 6px;
+    right: 6px;
+    bottom: 6px;
+    backdrop-filter: none;
+    background: rgba(250, 252, 248, .98);
   }
 
   .forecast-panel.open {
-    height: 310px;
+    height: 176px;
   }
 
   .forecast-heading {
-    height: 82px;
-    padding: 13px 14px;
+    height: 52px;
+    padding: 8px 10px;
+  }
+
+  .forecast-title-row {
+    gap: 6px;
+  }
+
+  .forecast-title-row .eyebrow {
+    font-size: 7px;
+  }
+
+  .forecast-title-row small {
+    font-size: 7px;
   }
 
   .hourly-strip {
-    height: 228px;
-    padding: 12px;
+    height: 124px;
+    padding: 8px 9px 10px;
   }
 
   .hour-card {
-    flex-basis: 166px;
+    flex-basis: 142px;
+    min-width: 142px;
+  }
+
+  .leaflet-tile-pane {
+    filter: none;
+  }
+
+  .status-marker,
+  .air-marker {
+    box-shadow: 0 2px 7px rgba(18, 38, 40, .2);
+  }
+
+  .fire-area-label {
+    padding: 3px 6px !important;
+    font-size: 7px !important;
   }
 
   .leaflet-control-zoom {
