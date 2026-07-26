@@ -45,9 +45,8 @@ export default defineConfig(async () => {
 
   return {
     server: {
-      // Keep the Cloudflare quick-tunnel URL working while the app hot-reloads.
-      // A leading dot allows any generated *.trycloudflare.com hostname.
-      allowedHosts: [".trycloudflare.com"],
+      // The named Cloudflare tunnel exposes the canonical production hostname.
+      allowedHosts: ["incendios-madrid.rpica.net"],
       ...(isCodexSeatbeltSandbox
         ? { watch: { useFsEvents: false, usePolling: true } }
         : {}),

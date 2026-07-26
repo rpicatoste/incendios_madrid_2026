@@ -94,6 +94,7 @@ test("keeps upstream access fixed and the production listener private", async ()
     snapshotRoute,
     satelliteRoute,
     satelliteSnapshots,
+    effisAreaStatus,
     copernicusMap,
     worker,
     service,
@@ -110,6 +111,7 @@ test("keeps upstream access fixed and the production listener private", async ()
     readFile(new URL("../app/api/snapshots/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/satellite/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/satellite-snapshots.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/effis-area-status.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/copernicus-fire-map.ts", import.meta.url), "utf8"),
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../ops/foco-app.service", import.meta.url), "utf8"),
@@ -178,6 +180,13 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(satelliteRoute, /HOUR_PATTERN/);
   assert.match(satelliteRoute, /X-Content-Type-Options/);
   assert.match(satelliteSnapshots, /effis\.nrt\.ba\.poly/);
+  assert.match(satelliteSnapshots, /BURNT_REFRESH_INTERVAL_MS = 60 \* 60 \* 1000/);
+  assert.match(satelliteSnapshots, /getEffisAreaStatus/);
+  assert.match(effisAreaStatus, /api\.effis\.emergency\.copernicus\.eu\/rest\/2\/burntareas\/current/);
+  assert.match(effisAreaStatus, /REFRESH_INTERVAL_MS = 60 \* 60 \* 1000/);
+  assert.match(effisAreaStatus, /latestUpdateInView/);
+  assert.match(effisAreaStatus, /checkedAt/);
+  assert.match(effisAreaStatus, /mode: 0o600/);
   assert.match(satelliteSnapshots, /VIIRS_SNPP_Aerosol_Type_Deep_Blue_Best_Estimate/);
   assert.match(satelliteSnapshots, /VIIRS_NOAA20_Thermal_Anomalies_375m_All/);
   assert.match(satelliteSnapshots, /VIIRS_SNPP_Thermal_Anomalies_375m_All/);
@@ -204,6 +213,8 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.equal(dashboard.includes('dashArray: station.carriedForward ? "4 3"'), true);
   assert.match(dashboard, /NASA GIBS · calor VIIRS/);
   assert.match(dashboard, /layerSourceDate/);
+  assert.match(dashboard, /Producto diario, sin hora fija/);
+  assert.match(dashboard, /effis\.csv/);
   assert.match(dashboard, /!hasFrozenSatellite && isLive/);
   assert.match(dashboard, /\[smokeVisible, setSmokeVisible\] = useState\(false\)/);
   assert.match(dashboard, /foco-visitor-recorded-v1/);

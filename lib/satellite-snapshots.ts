@@ -1,6 +1,10 @@
 import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { inflateSync } from "node:zlib";
+import {
+  getEffisAreaStatus,
+  type EffisAreaStatus,
+} from "./effis-area-status";
 
 export const SATELLITE_BOUNDS: [[number, number], [number, number]] = [
   [39.35, -5.9],
@@ -36,12 +40,14 @@ export type SatelliteSnapshot = {
   bounds: typeof SATELLITE_BOUNDS;
   layers: Partial<Record<SatelliteLayer, true>>;
   layerCapturedAt: Partial<Record<SatelliteLayer, string>>;
+  layerCheckedAt?: Partial<Record<SatelliteLayer, string>>;
   layerSourceDate?: Partial<Record<RasterLayer, string>>;
   rasterDimensions?: Partial<
     Record<RasterLayer, { width: number; height: number }>
   >;
   staleLayers?: Partial<Record<SatelliteLayer, true>>;
   errors?: Partial<Record<SatelliteLayer, string>>;
+  effis?: EffisAreaStatus;
   copernicus?: {
     areaProduct?: string;
     areaObservedAt?: string;
@@ -65,6 +71,7 @@ const LOOKBACK_DAYS: Record<RasterLayer, number> = {
   heat: 2,
   smoke: 2,
 };
+const BURNT_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 
 const sourceUrl = (layer: RasterLayer, date: string) => {
   const isEffis = layer === "burnt";
@@ -246,6 +253,21 @@ const capturePng = async (
   throw new Error(lastError);
 };
 
+const reusePng = async (
+  storageId: string,
+  layer: RasterLayer,
+  previous: SatelliteSnapshot,
+) => {
+  const bytes = await readFile(layerPath(storageId, layer));
+  if (!pngHasVisiblePixels(bytes)) {
+    throw new Error("La copia anterior no contiene datos");
+  }
+  return {
+    sourceDate: previous.layerSourceDate?.[layer] || previous.capturedAt.slice(0, 10),
+    reused: true as const,
+  };
+};
+
 export const captureSatelliteSnapshot = async (
   storageId: string,
   capturedAt: string,
@@ -260,14 +282,25 @@ export const captureSatelliteSnapshot = async (
   } catch {
     previous = undefined;
   }
+  const previousBurntCheck =
+    previous?.layerCheckedAt?.burnt || previous?.layerCapturedAt?.burnt;
+  const burntAge = previousBurntCheck
+    ? Date.parse(capturedAt) - Date.parse(previousBurntCheck)
+    : Infinity;
+  const canReuseBurnt =
+    Boolean(previous?.layers.burnt) && burntAge >= 0 && burntAge < BURNT_REFRESH_INTERVAL_MS;
   const results = await Promise.allSettled([
-    capturePng(storageId, "burnt", date),
+    canReuseBurnt
+      ? reusePng(storageId, "burnt", previous!)
+      : capturePng(storageId, "burnt", date),
     capturePng(storageId, "heat", date),
     capturePng(storageId, "smoke", date),
     atomicWrite(layerPath(storageId, "copernicus"), JSON.stringify(copernicusMap)),
+    getEffisAreaStatus(new Date(capturedAt)),
   ]);
   const layers: SatelliteSnapshot["layers"] = {};
   const layerCapturedAt: SatelliteSnapshot["layerCapturedAt"] = {};
+  const layerCheckedAt: NonNullable<SatelliteSnapshot["layerCheckedAt"]> = {};
   const layerSourceDate: NonNullable<SatelliteSnapshot["layerSourceDate"]> = {};
   const rasterDimensions: NonNullable<SatelliteSnapshot["rasterDimensions"]> = {};
   const staleLayers: NonNullable<SatelliteSnapshot["staleLayers"]> = {};
@@ -276,16 +309,31 @@ export const captureSatelliteSnapshot = async (
     const result = results[index];
     if (result.status === "fulfilled") {
       layers[layer] = true;
-      layerCapturedAt[layer] = capturedAt;
+      const reused =
+        layer !== "copernicus" &&
+        Boolean((result.value as { reused?: true }).reused);
+      layerCapturedAt[layer] = reused
+        ? previous?.layerCapturedAt?.[layer] || capturedAt
+        : capturedAt;
+      layerCheckedAt[layer] = reused
+        ? previous?.layerCheckedAt?.[layer] ||
+          previous?.layerCapturedAt?.[layer] ||
+          capturedAt
+        : capturedAt;
       if (layer !== "copernicus") {
         const sourceDate = (result.value as { sourceDate: string }).sourceDate;
         layerSourceDate[layer] = sourceDate;
         rasterDimensions[layer] = RASTER_DIMENSIONS[layer];
         if (sourceDate !== date) staleLayers[layer] = true;
+        if (reused && previous?.staleLayers?.[layer]) staleLayers[layer] = true;
+        if (reused && previous?.errors?.[layer]) {
+          errors[layer] = previous.errors[layer]!;
+        }
       }
       return;
     }
     errors[layer] = result.reason instanceof Error ? result.reason.message : "Sin captura";
+    layerCheckedAt[layer] = capturedAt;
     if (!previous?.layers[layer]) return;
     try {
       const existingBytes = await readFile(layerPath(storageId, layer));
@@ -306,15 +354,31 @@ export const captureSatelliteSnapshot = async (
       // No existe una copia anterior válida que se pueda conservar.
     }
   }));
+  const effisResult = results[SATELLITE_LAYERS.length];
+  const effis =
+    effisResult.status === "fulfilled"
+      ? (effisResult.value as EffisAreaStatus)
+      : previous?.effis
+        ? {
+            ...previous.effis,
+            stale: true as const,
+            error:
+              effisResult.reason instanceof Error
+                ? effisResult.reason.message
+                : "EFFIS no accesible",
+          }
+        : undefined;
   const snapshot: SatelliteSnapshot = {
     schemaVersion: 3,
     capturedAt,
     bounds: SATELLITE_BOUNDS,
     layers,
+    layerCheckedAt,
     layerCapturedAt,
     layerSourceDate,
     rasterDimensions,
     ...(Object.keys(staleLayers).length ? { staleLayers } : {}),
+    effis,
     ...(Object.keys(errors).length ? { errors } : {}),
     copernicus: copernicusMap?.source
       ? {

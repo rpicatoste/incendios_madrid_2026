@@ -10,24 +10,24 @@ Numebox. No contiene tokens, claves ni cookies.
 - Remoto: `git@github.com:rpicatoste/incendios_madrid_2026.git`
 - Node: `/home/rpica/.local/node-v22/bin/node`
 - Datos persistentes: `/home/rpica/workspace/incendios_madrid_2026/data`
-- URL pública actual:
-  `https://managers-brunswick-titanium-strategies.trycloudflare.com`
+- URL pública canónica: `https://incendios-madrid.rpica.net`
 
 La carpeta `data` y el archivo `.env` no se deben borrar, copiar a Git ni
-mostrar en la salida de comandos. El túnel `foco-cloudflared.service` no debe
-reiniciarse salvo petición expresa: TryCloudflare asignaría otra URL.
+mostrar en la salida de comandos. El túnel nombrado `cloudflared.service` debe
+permanecer activo siempre que sea posible. El antiguo quick tunnel
+`foco-cloudflared.service` está deshabilitado y no se debe reactivar.
 
 ## Servicios
 
 - `foco-app.service`: aplicación, solo escucha en `127.0.0.1:3000`.
-- `foco-cloudflared.service`: túnel público a ese puerto.
+- `cloudflared.service`: túnel nombrado que publica la URL canónica.
 - `foco-snapshotter.service`: activa una captura cada cinco minutos; se crea un
   snapshot inmutable en la primera captura de cada hora.
 
 Comprobación rápida:
 
 ```bash
-systemctl --user is-active foco-app.service foco-cloudflared.service foco-snapshotter.service
+systemctl --user is-active foco-app.service cloudflared.service foco-snapshotter.service
 curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
 ```
 
@@ -68,7 +68,9 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
 - FIDIAS Castilla-La Mancha: ficha de La Mierla.
 - Datos Abiertos JCyL: parte estructurado de Burgohondo.
 - Copernicus EMSR898: área y frente de La Mierla.
-- EFFIS WMS: área recorrida.
+- EFFIS: área recorrida. El ráster WMS y los metadatos de la API del visor v2
+  se comprueban como máximo una vez por hora. La interfaz muestra la última
+  modificación real en la zona y avisa cuando conserva un ráster anterior.
 - NASA GIBS: detecciones térmicas VIIRS de NOAA-20 y Suomi NPP, más
   humo/aerosoles VIIRS.
 - MITECO: sensores de calidad del aire; caché y refresco cada quince minutos.

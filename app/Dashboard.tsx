@@ -73,11 +73,25 @@ type SnapshotData = {
     bounds: [[number, number], [number, number]];
     layers: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus", true>>;
     layerCapturedAt?: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus", string>>;
+    layerCheckedAt?: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus", string>>;
     layerSourceDate?: Partial<Record<"burnt" | "heat" | "smoke", string>>;
     rasterDimensions?: Partial<
       Record<"burnt" | "heat" | "smoke", { width: number; height: number }>
     >;
     staleLayers?: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus", true>>;
+    errors?: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus", string>>;
+    effis?: {
+      schemaVersion: 1;
+      checkedAt: string;
+      readAt?: string;
+      periodDays: number;
+      recentAreasInSpain: number;
+      recentAreasInView: number;
+      latestUpdateSpain?: string;
+      latestUpdateInView?: string;
+      stale?: true;
+      error?: string;
+    };
     copernicus?: {
       areaProduct?: string;
       areaObservedAt?: string;
@@ -1205,11 +1219,23 @@ export default function Dashboard() {
       id: "effis-area",
       icon: "EU",
       className: "source-icon--eu",
-      title: "Copernicus EFFIS · área",
-      detail: "Superficie recorrida; copia completa servida desde caché",
-      url: "https://forest-fire.emergency.copernicus.eu/apps/effis_current_situation/",
-      read: displaySatellite?.layerCapturedAt?.burnt,
-      ok: Boolean(displaySatellite?.layers.burnt),
+      title: "Copernicus EFFIS · área recorrida",
+      detail: displaySatellite?.effis?.latestUpdateInView
+        ? `Producto diario, sin hora fija · zona Centro actualizada ${formatSnapshotTime(displaySatellite.effis.latestUpdateInView)}` +
+          (displaySatellite.effis.stale ? " · metadatos: última lectura válida" : "") +
+          (displaySatellite.staleLayers?.burnt ? " · ráster: última copia válida" : "")
+        : displaySatellite?.layerSourceDate?.burnt
+          ? `Producto diario, sin hora fija · imagen del ${formatSourceDate(displaySatellite.layerSourceDate.burnt)}` +
+            (displaySatellite.staleLayers?.burnt ? " · última copia válida" : "")
+          : "Producto diario; FOCO comprueba la fuente una vez por hora",
+      url: "https://forest-fire.emergency.copernicus.eu/apps/effis.csv/",
+      read:
+        displaySatellite?.effis?.readAt ||
+        displaySatellite?.layerCheckedAt?.burnt ||
+        displaySatellite?.layerCapturedAt?.burnt,
+      ok:
+        Boolean(displaySatellite?.effis && !displaySatellite.effis.stale) ||
+        Boolean(displaySatellite?.layers.burnt && !displaySatellite.errors?.burnt),
     },
     {
       id: "nasa-heat",
@@ -1592,7 +1618,7 @@ export default function Dashboard() {
               <button
                 aria-pressed={burntVisible}
                 onClick={() => setBurntVisible(!burntVisible)}
-                title="Superficie recorrida por el fuego según EFFIS y Copernicus EMS"
+                title="EFFIS es un producto diario sin hora fija; FOCO lo comprueba una vez por hora"
               >
                 <i className="legend-burnt"></i><span>Área recorrida</span><em>{burntVisible ? "ON" : "OFF"}</em>
               </button>
