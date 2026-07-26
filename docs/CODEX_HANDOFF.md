@@ -38,19 +38,28 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
   área recorrida EFFIS, frente Copernicus, actividad VIIRS, humo, calidad del
   aire, zonas aproximadas y posición del usuario.
 - Previsión horaria compacta para cualquier punto, incluso dentro de las zonas
-  aproximadas.
+  aproximadas, con temperatura y símbolos meteorológicos legibles. La flecha
+  azul del punto se orienta con el viento.
+- Visualización ambiental opcional de viento con 12 partículas en móvil o 24
+  en escritorio, limitada a 20 FPS, pausada con la pestaña oculta y desactivada
+  para `prefers-reduced-motion`.
 - Navegación entre snapshots horarios y vivo.
 - Evacuaciones y confinamientos de Madrid reconstruidos automáticamente desde
-  la página oficial; Ávila/otras regiones siguen dependiendo de los datos
-  disponibles en sus fuentes.
+  la página oficial. Fuera de Madrid se conservan relaciones nominales
+  oficiales fechadas: JCyL, FIDIAS/CLM y RAN no ofrecen actualmente una fuente
+  estructurada equivalente y FOCO nunca infiere localidades afectadas.
 - Pestaña `Actualidad` con estados de Sierra Oeste, Burgohondo y La Mierla,
   además de publicaciones filtradas de fuentes oficiales.
-- La Mierla usa el perímetro vectorial oficial Copernicus EMSR898.
-- El área EFFIS se cachea como PNG 4096×2731. Hotspots y humo se cachean a
-  1600×1067 desde NASA GIBS. Las capturas rechazan PNG transparentes, buscan
-  hasta dos fechas anteriores para los productos diarios y guardan la fecha
-  real del producto en el manifiesto v3. Un fallo conserva únicamente una
-  copia anterior con píxeles visibles y la marca como `stale`.
+- Copernicus integra EMSR900 y EMSR898: Brieva, Villa del Prado, La Atalaya, La
+  Mierla y Selas. Cada área, frente y llama conserva el producto y la hora de
+  observación propios; los círculos aproximados solo desaparecen cuando existe
+  una correspondencia explícita con el perímetro oficial.
+- El área EFFIS principal es GeoJSON estructurado de los últimos 30 días y queda
+  congelado en cada snapshot v4. El PNG 4096×2731 es un respaldo legado que se
+  intenta cada seis horas. Hotspots y humo se cachean a 1600×1067 desde NASA
+  GIBS. Las capturas rechazan PNG transparentes, buscan hasta dos fechas
+  anteriores para los productos diarios y guardan la fecha real del producto.
+  Un fallo conserva únicamente una copia anterior válida y la marca `stale`.
 - Cada snapshot congela por valor el estado, los puntos regionales, los
   sensores de aire, los rásteres satelitales y el GeoJSON de Copernicus.
   Un snapshot histórico sin copia congelada no consulta capas remotas después.
@@ -67,10 +76,11 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
   cinco minutos.
 - FIDIAS Castilla-La Mancha: ficha de La Mierla.
 - Datos Abiertos JCyL: parte estructurado de Burgohondo.
-- Copernicus EMSR898: área y frente de La Mierla.
-- EFFIS: área recorrida. El ráster WMS y los metadatos de la API del visor v2
-  se comprueban como máximo una vez por hora. La interfaz muestra la última
-  modificación real en la zona y avisa cuando conserva un ráster anterior.
+- Copernicus EMSR900 y EMSR898: áreas, frentes y llamas de todas las AOI con
+  productos entregados; metadatos cacheados quince minutos.
+- EFFIS: área recorrida. La API vectorial se comprueba como máximo una vez por
+  hora; el ráster WMS legado, cada seis horas. La interfaz muestra por separado
+  lectura, fecha del producto y última modificación real en la zona.
 - NASA GIBS: detecciones térmicas VIIRS de NOAA-20 y Suomi NPP, más
   humo/aerosoles VIIRS.
 - MITECO: sensores de calidad del aire; caché y refresco cada quince minutos.
@@ -82,7 +92,8 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
   carga la autoridad intermedia pública de FNMT desde `ops/fnmt-components.pem`; la
   validación TLS nunca se desactiva.
 - Open-Meteo: previsión puntual solicitada por el navegador; se renueva cada
-  quince minutos mientras el panel del punto permanece abierto.
+  quince minutos mientras el panel del punto permanece abierto. El viento
+  ambiental de Madrid se renueva cada treinta minutos para las partículas.
 - El navegador renueva estado cada dos minutos y región, noticias, manifiesto
   satelital y lista de snapshots cada cinco minutos; también refresca al volver
   a primer plano o recuperar conexión.

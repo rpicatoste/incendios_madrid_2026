@@ -12,6 +12,10 @@ import type {
   CopernicusFeatureProperties,
   CopernicusFireMap,
 } from "../lib/copernicus-fire-map";
+import type {
+  EffisAreaFeatureProperties,
+  EffisAreaMap,
+} from "../lib/effis-area-status";
 
 declare global {
   interface Window {
@@ -38,6 +42,7 @@ type AirStation = {
 
 type ForecastHour = {
   time: string;
+  temperature: number;
   cloud: number;
   sunMinutes: number;
   weatherCode: number;
@@ -52,6 +57,7 @@ type ForecastCacheEntry = {
   expiresAt: number;
   rows: ForecastHour[];
   windDirection: number;
+  windSpeed: number;
 };
 
 type LiveStatus = {
@@ -68,18 +74,18 @@ type SnapshotData = {
   region: RegionData;
   layerTime: string;
   satellite?: {
-    schemaVersion?: 2 | 3;
+    schemaVersion?: 2 | 3 | 4;
     capturedAt: string;
     bounds: [[number, number], [number, number]];
-    layers: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus", true>>;
-    layerCapturedAt?: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus", string>>;
-    layerCheckedAt?: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus", string>>;
+    layers: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus" | "effis", true>>;
+    layerCapturedAt?: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus" | "effis", string>>;
+    layerCheckedAt?: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus" | "effis", string>>;
     layerSourceDate?: Partial<Record<"burnt" | "heat" | "smoke", string>>;
     rasterDimensions?: Partial<
       Record<"burnt" | "heat" | "smoke", { width: number; height: number }>
     >;
-    staleLayers?: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus", true>>;
-    errors?: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus", string>>;
+    staleLayers?: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus" | "effis", true>>;
+    errors?: Partial<Record<"burnt" | "heat" | "smoke" | "copernicus" | "effis", string>>;
     effis?: {
       schemaVersion: 1;
       checkedAt: string;
@@ -142,8 +148,8 @@ const OFFICIAL_URL =
 const DSN_URL = "https://www.dsn.gob.es/gl/node/32742";
 const CLM_URL =
   "https://www.castillalamancha.es/actualidad/notasdeprensa/castilla-la-mancha-moviliza-un-amplio-operativo-para-hacer-frente-los-incendios-registrados-en-la";
-const CEMS_LA_MIERLA_URL =
-  "https://mapping.emergency.copernicus.eu/activations/EMSR898/";
+const CEMS_CENTRAL_URL =
+  "https://mapping.emergency.copernicus.eu/activations/EMSR900/";
 const MITECO_ICA_URL = "https://ica.miteco.es/datos/ica-ultima-hora.csv";
 const JCYL_FIRE_URL =
   "https://analisis.datosabiertos.jcyl.es/explore/dataset/incendios-forestales/";
@@ -200,7 +206,7 @@ const compass = (degrees: number) => {
 
 const skySymbol = (hour: ForecastHour) => {
   if (!hour.isDay && hour.weatherCode <= 2) return { symbol: "☾", label: "Noche despejada" };
-  if (hour.weatherCode === 0) return { symbol: "☀︎", label: "Despejado" };
+  if (hour.weatherCode === 0) return { symbol: "☀️", label: "Despejado" };
   if (hour.weatherCode === 1) return { symbol: "🌤", label: "Principalmente despejado" };
   if (hour.weatherCode === 2) return { symbol: "⛅", label: "Con claros" };
   if (hour.weatherCode === 3) return { symbol: "☁︎", label: "Cubierto" };
@@ -211,7 +217,7 @@ const skySymbol = (hour: ForecastHour) => {
   }
   if ([71, 73, 75, 77, 85, 86].includes(hour.weatherCode)) return { symbol: "🌨", label: "Nieve" };
   if ([95, 96, 99].includes(hour.weatherCode)) return { symbol: "⛈", label: "Tormenta" };
-  if (hour.sunMinutes >= 45) return { symbol: "☀︎", label: "Despejado" };
+  if (hour.sunMinutes >= 45) return { symbol: "☀️", label: "Despejado" };
   if (hour.sunMinutes >= 15) return { symbol: "⛅", label: "Con claros" };
   return {
     symbol: hour.isDay ? "☁︎" : "☾",
@@ -247,15 +253,16 @@ export default function Dashboard() {
   const fireAreaLayerRef = useRef<Leaflet.LayerGroup | null>(null);
   const airLayerRef = useRef<Leaflet.LayerGroup | null>(null);
   const heatLayerRef = useRef<Leaflet.TileLayer.WMS | null>(null);
-  const burntLayerRef = useRef<Leaflet.TileLayer.WMS | null>(null);
   const smokeLayerRef = useRef<Leaflet.TileLayer | null>(null);
   const historicalHeatLayerRef = useRef<Leaflet.ImageOverlay | null>(null);
   const historicalBurntLayerRef = useRef<Leaflet.ImageOverlay | null>(null);
   const historicalSmokeLayerRef = useRef<Leaflet.ImageOverlay | null>(null);
   const copernicusBurntLayerRef = useRef<Leaflet.LayerGroup | null>(null);
   const copernicusFrontLayerRef = useRef<Leaflet.LayerGroup | null>(null);
+  const effisAreaLayerRef = useRef<Leaflet.LayerGroup | null>(null);
   const userMarkerRef = useRef<Leaflet.Marker | null>(null);
   const forecastMarkerRef = useRef<Leaflet.Marker | null>(null);
+  const windCanvasRef = useRef<HTMLCanvasElement>(null);
   const canvasRendererRef = useRef<Leaflet.Renderer | null>(null);
   const forecastRequestRef = useRef<AbortController | null>(null);
   const forecastCacheRef = useRef<Map<string, ForecastCacheEntry>>(new Map());
@@ -265,6 +272,7 @@ export default function Dashboard() {
   const [liveRegion, setLiveRegion] = useState<RegionData>(defaultRegionData);
   const [liveSatellite, setLiveSatellite] = useState<SnapshotData["satellite"]>(undefined);
   const [cachedFireMap, setCachedFireMap] = useState<CopernicusFireMap | null>(null);
+  const [cachedEffisMap, setCachedEffisMap] = useState<EffisAreaMap | null>(null);
   const [snapshots, setSnapshots] = useState<SnapshotRecord[]>([]);
   const [snapshotIndex, setSnapshotIndex] = useState<number | null>(null);
   const [mapReady, setMapReady] = useState(false);
@@ -280,6 +288,7 @@ export default function Dashboard() {
   const [heatVisible, setHeatVisible] = useState(true);
   const [burntVisible, setBurntVisible] = useState(true);
   const [frontVisible, setFrontVisible] = useState(true);
+  const [windParticlesVisible, setWindParticlesVisible] = useState(true);
   const [smokeVisible, setSmokeVisible] = useState(false);
   const [fireAreasVisible, setFireAreasVisible] = useState(true);
   const [userVisible, setUserVisible] = useState(true);
@@ -287,6 +296,8 @@ export default function Dashboard() {
   const [forecast, setForecast] = useState<ForecastHour[]>([]);
   const [forecastState, setForecastState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [forecastWindDirection, setForecastWindDirection] = useState<number | null>(null);
+  const [forecastWindSpeed, setForecastWindSpeed] = useState<number | null>(null);
+  const [ambientWind, setAmbientWind] = useState<{ direction: number; speed: number } | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [activeList, setActiveList] = useState<StatusKind>("evacuado");
@@ -324,6 +335,12 @@ export default function Dashboard() {
     typeof rawWindDirection === "number" && Number.isFinite(rawWindDirection)
       ? Math.round(((rawWindDirection % 360) + 360) % 360)
       : null;
+  const currentWindSpeed =
+    typeof forecastWindSpeed === "number" && Number.isFinite(forecastWindSpeed)
+      ? Math.max(0, forecastWindSpeed)
+      : null;
+  const particleWindDirection = currentWindDirection ?? ambientWind?.direction ?? null;
+  const particleWindSpeed = currentWindSpeed ?? ambientWind?.speed ?? null;
 
   const visiblePoints = useMemo(
     () => displayRegion.points.filter((point) => point.kind === activeList),
@@ -383,6 +400,7 @@ export default function Dashboard() {
     if (!force && cachedForecast && cachedForecast.expiresAt > Date.now()) {
       setForecast(cachedForecast.rows);
       setForecastWindDirection(cachedForecast.windDirection);
+      setForecastWindSpeed(cachedForecast.windSpeed);
       setForecastState("ready");
       return;
     }
@@ -393,15 +411,16 @@ export default function Dashboard() {
     if (!force) {
       setForecast([]);
       setForecastWindDirection(null);
+      setForecastWindSpeed(null);
       setForecastState("loading");
     }
     try {
       const params = new URLSearchParams({
         latitude: String(lat),
         longitude: String(lon),
-        current: "wind_direction_10m",
+        current: "wind_direction_10m,wind_speed_10m",
         hourly:
-          "cloud_cover,sunshine_duration,weather_code,is_day,precipitation_probability,precipitation,wind_speed_10m,wind_direction_10m",
+          "temperature_2m,cloud_cover,sunshine_duration,weather_code,is_day,precipitation_probability,precipitation,wind_speed_10m,wind_direction_10m",
         forecast_hours: "12",
         timezone: "auto",
       });
@@ -414,6 +433,7 @@ export default function Dashboard() {
       const rows: ForecastHour[] = data.hourly.time
         .map((time: string, index: number) => ({
           time,
+          temperature: Math.round((data.hourly.temperature_2m[index] ?? 0) * 10) / 10,
           cloud: data.hourly.cloud_cover[index] ?? 0,
           sunMinutes: Math.round((data.hourly.sunshine_duration[index] ?? 0) / 60),
           weatherCode: data.hourly.weather_code[index] ?? 0,
@@ -428,8 +448,16 @@ export default function Dashboard() {
       const windDirection = Number.isFinite(currentDirection)
         ? currentDirection
         : rows[0]?.windDirection;
-      if (!rows.length || typeof windDirection !== "number" || !Number.isFinite(windDirection)) {
-        throw new Error("Forecast returned no current hours or wind direction");
+      const currentSpeed = Number(data.current?.wind_speed_10m);
+      const windSpeed = Number.isFinite(currentSpeed) ? currentSpeed : rows[0]?.wind;
+      if (
+        !rows.length ||
+        typeof windDirection !== "number" ||
+        !Number.isFinite(windDirection) ||
+        typeof windSpeed !== "number" ||
+        !Number.isFinite(windSpeed)
+      ) {
+        throw new Error("Forecast returned no current hours or wind");
       }
       if (forecastCacheRef.current.size >= 12) {
         const oldestKey = forecastCacheRef.current.keys().next().value;
@@ -439,9 +467,11 @@ export default function Dashboard() {
         expiresAt: Date.now() + REFRESH_INTERVALS.forecast,
         rows,
         windDirection,
+        windSpeed,
       });
       setForecast(rows);
       setForecastWindDirection(windDirection);
+      setForecastWindSpeed(windSpeed);
       setForecastState("ready");
       setWeatherReadAt(new Date().toISOString());
     } catch (error) {
@@ -449,11 +479,51 @@ export default function Dashboard() {
       if (!force) {
         setForecast([]);
         setForecastWindDirection(null);
+        setForecastWindSpeed(null);
         setForecastState("error");
       }
     } finally {
       if (forecastRequestRef.current === controller) forecastRequestRef.current = null;
     }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    let controller: AbortController | undefined;
+    const refreshAmbientWind = async () => {
+      controller?.abort();
+      controller = new AbortController();
+      const params = new URLSearchParams({
+        latitude: "40.4168",
+        longitude: "-3.7038",
+        current: "wind_direction_10m,wind_speed_10m",
+        timezone: "auto",
+      });
+      try {
+        const response = await fetch(
+          "https://api.open-meteo.com/v1/forecast?" + params.toString(),
+          { cache: "no-store", signal: controller.signal },
+        );
+        if (!response.ok) return;
+        const data = await response.json();
+        const direction = Number(data.current?.wind_direction_10m);
+        const speed = Number(data.current?.wind_speed_10m);
+        if (active && Number.isFinite(direction) && Number.isFinite(speed)) {
+          setAmbientWind({ direction, speed });
+        }
+      } catch (error) {
+        if ((error as Error).name !== "AbortError") return;
+      }
+    };
+    void refreshAmbientWind();
+    const interval = window.setInterval(() => {
+      if (!document.hidden) void refreshAmbientWind();
+    }, 30 * 60 * 1000);
+    return () => {
+      active = false;
+      controller?.abort();
+      window.clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
@@ -645,6 +715,7 @@ export default function Dashboard() {
 
         situationLayerRef.current = L.layerGroup().addTo(map);
         fireAreaLayerRef.current = L.layerGroup().addTo(map);
+        effisAreaLayerRef.current = L.layerGroup().addTo(map);
         copernicusBurntLayerRef.current = L.layerGroup().addTo(map);
         copernicusFrontLayerRef.current = L.layerGroup().addTo(map);
         airLayerRef.current = L.layerGroup().addTo(map);
@@ -665,20 +736,6 @@ export default function Dashboard() {
             updateWhenZooming: false,
             keepBuffer: 1,
             attribution: "NASA GIBS / VIIRS",
-          });
-
-        burntLayerRef.current = L.tileLayer
-          .wms("https://maps.effis.emergency.copernicus.eu/effis", {
-            layers: "effis.nrt.ba.poly",
-            format: "image/png",
-            transparent: true,
-            version: "1.1.1",
-            time: new Date().toISOString().slice(0, 10),
-            opacity: 0.48,
-            updateWhenIdle: true,
-            updateWhenZooming: false,
-            keepBuffer: 1,
-            attribution: "Copernicus EFFIS / GWIS",
           });
 
         smokeLayerRef.current = L.tileLayer(
@@ -759,6 +816,108 @@ export default function Dashboard() {
   }, [currentWindDirection, mapReady, selectedPoint]);
 
   useEffect(() => {
+    const canvas = windCanvasRef.current;
+    if (
+      !canvas ||
+      !mapReady ||
+      !windParticlesVisible ||
+      particleWindDirection === null ||
+      particleWindSpeed === null
+    ) {
+      return;
+    }
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (reducedMotion.matches) {
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+
+    type WindParticle = {
+      x: number;
+      y: number;
+      opacity: number;
+      scale: number;
+    };
+    let width = 0;
+    let height = 0;
+    let particles: WindParticle[] = [];
+    let frame = 0;
+    let previousFrame = 0;
+    let hidden = document.hidden;
+    const bearing = ((particleWindDirection + 180) * Math.PI) / 180;
+    const directionX = Math.sin(bearing);
+    const directionY = -Math.cos(bearing);
+    const velocity = Math.min(42, 9 + particleWindSpeed * 0.72);
+    const trail = Math.min(18, 6 + particleWindSpeed * 0.26);
+
+    const makeParticle = (): WindParticle => ({
+      x: Math.random() * Math.max(width, 1),
+      y: Math.random() * Math.max(height, 1),
+      opacity: 0.08 + Math.random() * 0.13,
+      scale: 0.65 + Math.random() * 0.7,
+    });
+
+    const resize = () => {
+      const bounds = canvas.getBoundingClientRect();
+      width = Math.max(1, Math.round(bounds.width));
+      height = Math.max(1, Math.round(bounds.height));
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+      canvas.width = Math.round(width * pixelRatio);
+      canvas.height = Math.round(height * pixelRatio);
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      const count = width < 700 ? 12 : 24;
+      particles = Array.from({ length: count }, makeParticle);
+    };
+
+    const draw = (timestamp: number) => {
+      frame = window.requestAnimationFrame(draw);
+      if (hidden || timestamp - previousFrame < 50) return;
+      const elapsed = previousFrame
+        ? Math.min((timestamp - previousFrame) / 1000, 0.1)
+        : 0;
+      previousFrame = timestamp;
+      context.clearRect(0, 0, width, height);
+      context.lineCap = "round";
+      particles.forEach((particle) => {
+        particle.x += directionX * velocity * particle.scale * elapsed;
+        particle.y += directionY * velocity * particle.scale * elapsed;
+        const margin = trail + 3;
+        if (particle.x < -margin) particle.x = width + margin;
+        if (particle.x > width + margin) particle.x = -margin;
+        if (particle.y < -margin) particle.y = height + margin;
+        if (particle.y > height + margin) particle.y = -margin;
+        context.beginPath();
+        context.moveTo(
+          particle.x - directionX * trail * particle.scale,
+          particle.y - directionY * trail * particle.scale,
+        );
+        context.lineTo(particle.x, particle.y);
+        context.lineWidth = 0.8 + particle.scale * 0.45;
+        context.strokeStyle = `rgba(24, 111, 153, ${particle.opacity})`;
+        context.stroke();
+      });
+    };
+
+    const visibilityChanged = () => {
+      hidden = document.hidden;
+      previousFrame = 0;
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(canvas);
+    document.addEventListener("visibilitychange", visibilityChanged);
+    frame = window.requestAnimationFrame(draw);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", visibilityChanged);
+      context.clearRect(0, 0, width, height);
+    };
+  }, [mapReady, particleWindDirection, particleWindSpeed, windParticlesVisible]);
+
+  useEffect(() => {
     let active = true;
     if (!displaySatellite?.layers.copernicus || !satelliteStorageId) {
       const clearCachedMap = window.setTimeout(() => {
@@ -782,6 +941,36 @@ export default function Dashboard() {
       })
       .catch(() => {
         if (active) setCachedFireMap(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [displaySatellite, satelliteStorageId]);
+
+  useEffect(() => {
+    let active = true;
+    if (!displaySatellite?.layers.effis || !satelliteStorageId) {
+      const clearEffisMap = window.setTimeout(() => {
+        if (active) setCachedEffisMap(null);
+      }, 0);
+      return () => {
+        active = false;
+        window.clearTimeout(clearEffisMap);
+      };
+    }
+    fetch(
+      `/api/satellite?hour=${encodeURIComponent(satelliteStorageId)}&layer=effis&v=${encodeURIComponent(displaySatellite.capturedAt)}`,
+      { cache: satelliteStorageId === "live" ? "no-store" : "force-cache" },
+    )
+      .then((response) => {
+        if (!response.ok) throw new Error("EFFIS histórico no disponible");
+        return response.json() as Promise<EffisAreaMap>;
+      })
+      .then((data) => {
+        if (active) setCachedEffisMap(data);
+      })
+      .catch(() => {
+        if (active) setCachedEffisMap(null);
       });
     return () => {
       active = false;
@@ -829,6 +1018,45 @@ export default function Dashboard() {
   }, [displaySatellite, mapReady, satelliteStorageId]);
 
   useEffect(() => {
+    if (!mapReady || !window.L || !effisAreaLayerRef.current) return;
+    const L = window.L;
+    effisAreaLayerRef.current.clearLayers();
+    if (!cachedEffisMap?.features?.length) return;
+    const readAt = cachedEffisMap.source.readAt
+      ? formatSnapshotTime(cachedEffisMap.source.readAt)
+      : "sin hora";
+    L.geoJSON<EffisAreaFeatureProperties>(cachedEffisMap, {
+      renderer: canvasRendererRef.current,
+      bubblingMouseEvents: false,
+      style: {
+        color: "#84483a",
+        weight: 1,
+        fillColor: "#b9684e",
+        fillOpacity: 0.24,
+      },
+      onEachFeature: (feature, layer) => {
+        const properties = feature.properties;
+        const location =
+          [properties.commune, properties.province].filter(Boolean).join(" · ") ||
+          "Zona Centro";
+        const area = properties.areaHectares
+          ? `${properties.areaHectares.toLocaleString("es-ES")} ha cartografiadas.`
+          : "Superficie cartografiada sin área publicada.";
+        const observed = properties.lastFireDate || properties.fireDate;
+        const updated = properties.lastUpdate;
+        layer
+          .bindPopup(
+            `<div class="foco-popup"><span class="popup-kicker" style="color:#8d4938">EFFIS · ÁREA RECORRIDA</span><strong>${escapeHtml(location)}</strong><p>${escapeHtml(area)}</p><small>Producto diario${observed ? ` · incendio observado ${escapeHtml(formatSnapshotTime(observed))}` : ""}${updated ? ` · actualizado ${escapeHtml(formatSnapshotTime(updated))}` : ""} · lectura FOCO ${escapeHtml(readAt)}${cachedEffisMap.source.stale ? " · última copia válida" : ""}</small></div>`,
+            { closeButton: false },
+          )
+          .on("click", (event: Leaflet.LeafletMouseEvent) =>
+            requestForecast(event.latlng.lat, event.latlng.lng),
+          );
+      },
+    }).addTo(effisAreaLayerRef.current);
+  }, [cachedEffisMap, mapReady, requestForecast]);
+
+  useEffect(() => {
     if (
       !mapReady ||
       !window.L ||
@@ -842,14 +1070,8 @@ export default function Dashboard() {
     copernicusFrontLayerRef.current.clearLayers();
     if (!displayFireMap?.features?.length) return;
 
-    const source = displayFireMap.source || {};
-    const observedArea = source.areaObservedAt
-      ? formatSnapshotTime(source.areaObservedAt)
-      : "hora no disponible";
-    const observedFront = source.frontObservedAt
-      ? formatSnapshotTime(source.frontObservedAt)
-      : "hora no disponible";
-    const areaFeature = displayFireMap.features.find(
+    const source = displayFireMap.source;
+    const areaFeatures = displayFireMap.features.filter(
       (feature) => feature.properties?.kind === "burnt-area",
     );
     const frontFeatures = displayFireMap.features.filter(
@@ -858,8 +1080,10 @@ export default function Dashboard() {
         feature.properties?.kind === "active-flame",
     );
 
-    if (areaFeature) {
-      L.geoJSON(areaFeature, {
+    if (areaFeatures.length) {
+      L.geoJSON<CopernicusFeatureProperties>(
+        { type: "FeatureCollection", features: areaFeatures },
+        {
         renderer: canvasRendererRef.current,
         bubblingMouseEvents: false,
         style: {
@@ -868,29 +1092,25 @@ export default function Dashboard() {
           fillColor: "#a45b48",
           fillOpacity: 0.34,
         },
-        onEachFeature: (_feature, layer) => {
+        onEachFeature: (feature, layer) => {
+          const properties = feature.properties;
+          const observed = properties.observedAt
+            ? formatSnapshotTime(properties.observedAt)
+            : "hora no disponible";
+          const area = properties.mappedAreaHectares
+            ? `${properties.mappedAreaHectares.toLocaleString("es-ES")} ha cartografiadas en este producto.`
+            : "Delimitación del último producto entregado.";
           layer
             .bindPopup(
-              `<div class="foco-popup"><span class="popup-kicker" style="color:#8d4938">COPERNICUS · ÁREA RECORRIDA</span><strong>La Mierla · Guadalajara</strong><p>Delimitación acumulada de los productos disponibles. Máximo cartografiado en un producto: ${Number(source.mappedAreaHectares || 0).toLocaleString("es-ES")} ha.</p><small>${escapeHtml(source.areaProduct || "Producto")}, observado ${escapeHtml(observedArea)} · lectura ${escapeHtml(source.readAt ? formatSnapshotTime(source.readAt) : "sin hora")}</small></div>`,
+              `<div class="foco-popup"><span class="popup-kicker" style="color:#8d4938">COPERNICUS · ÁREA CARTOGRAFIADA</span><strong>${escapeHtml(properties.areaName || properties.label)}</strong><p>${escapeHtml(area)}</p><small>${escapeHtml(properties.activationCode || "Copernicus")} · ${escapeHtml(properties.product || "producto")}, observado ${escapeHtml(observed)} · lectura ${escapeHtml(formatSnapshotTime(source.readAt))}</small></div>`,
               { closeButton: false },
             )
             .on("click", (event: Leaflet.LeafletMouseEvent) =>
               requestForecast(event.latlng.lat, event.latlng.lng),
             );
         },
-      }).addTo(copernicusBurntLayerRef.current);
-      L.circleMarker([40.953, -3.236], {
-        renderer: canvasRendererRef.current,
-        radius: 0,
-        opacity: 0,
-        fillOpacity: 0,
-        interactive: false,
-      })
-        .bindTooltip(
-          `La Mierla · Copernicus ${source.areaProduct || ""}`,
-          { permanent: true, direction: "center", className: "fire-area-label" },
-        )
-        .addTo(copernicusBurntLayerRef.current);
+      },
+      ).addTo(copernicusBurntLayerRef.current);
     }
 
     if (frontFeatures.length) {
@@ -915,11 +1135,14 @@ export default function Dashboard() {
             }),
           onEachFeature: (feature, layer) => {
             const isFront = feature.properties?.kind === "fire-front";
-            layer
-              .bindPopup(
-                `<div class="foco-popup"><span class="popup-kicker" style="color:#d88713">COPERNICUS · ${isFront ? "FRENTE OBSERVADO" : "LLAMA ACTIVA OBSERVADA"}</span><strong>La Mierla · Guadalajara</strong><p>${isFront ? "Línea de frente de la última observación que incluye esta geometría." : "Detección puntual incluida en el producto más reciente."}</p><small>Observado ${escapeHtml(isFront ? observedFront : observedArea)} · no equivale a posición actual en tiempo real</small></div>`,
-                { closeButton: false },
-              );
+            const properties = feature.properties;
+            const observed = properties?.observedAt
+              ? formatSnapshotTime(properties.observedAt)
+              : "hora no disponible";
+            layer.bindPopup(
+              `<div class="foco-popup"><span class="popup-kicker" style="color:#d88713">COPERNICUS · ${isFront ? "FRENTE OBSERVADO" : "LLAMA ACTIVA OBSERVADA"}</span><strong>${escapeHtml(properties?.areaName || properties?.label)}</strong><p>${isFront ? "Línea de frente de la observación más reciente que publicó esta geometría." : "Detección puntual incluida en el último producto que publicó llamas activas."}</p><small>${escapeHtml(properties?.activationCode || "Copernicus")} · observado ${escapeHtml(observed)} · no equivale a posición actual en tiempo real</small></div>`,
+              { closeButton: false },
+            );
           },
         },
       ).addTo(copernicusFrontLayerRef.current);
@@ -956,8 +1179,13 @@ export default function Dashboard() {
     if (!mapReady || !fireAreaLayerRef.current || !window.L) return;
     const L = window.L;
     fireAreaLayerRef.current.clearLayers();
+    const mappedFireIds = new Set(
+      (displayFireMap?.features || []).flatMap(
+        (feature) => feature.properties?.fireIds || [],
+      ),
+    );
     displayRegion.fires.forEach((fire) => {
-      if (fire.hasMappedPerimeter && displayFireMap?.features?.length) return;
+      if (mappedFireIds.has(fire.id)) return;
       const areaLabel = fire.areaHectares
         ? ` · ${fire.areaHectares.toLocaleString("es-ES")} ha`
         : "";
@@ -1023,13 +1251,17 @@ export default function Dashboard() {
       if (!visible && map.hasLayer(layer)) map.removeLayer(layer);
     };
     const hasFrozenSatellite = Boolean(displaySatellite);
+    const hasStructuredEffis = Boolean(cachedEffisMap?.features?.length);
     toggleLayer(airLayerRef.current, airVisible);
     toggleLayer(heatLayerRef.current, heatVisible && !hasFrozenSatellite && isLive);
-    toggleLayer(burntLayerRef.current, burntVisible && !hasFrozenSatellite && isLive);
     toggleLayer(smokeLayerRef.current, smokeVisible && !hasFrozenSatellite && isLive);
     toggleLayer(historicalHeatLayerRef.current, heatVisible && hasFrozenSatellite);
-    toggleLayer(historicalBurntLayerRef.current, burntVisible && hasFrozenSatellite);
+    toggleLayer(
+      historicalBurntLayerRef.current,
+      burntVisible && hasFrozenSatellite && !hasStructuredEffis,
+    );
     toggleLayer(historicalSmokeLayerRef.current, smokeVisible && hasFrozenSatellite);
+    toggleLayer(effisAreaLayerRef.current, burntVisible && hasStructuredEffis);
     toggleLayer(copernicusBurntLayerRef.current, burntVisible);
     toggleLayer(copernicusFrontLayerRef.current, frontVisible);
     toggleLayer(fireAreaLayerRef.current, fireAreasVisible);
@@ -1045,12 +1277,12 @@ export default function Dashboard() {
     displaySatellite,
     smokeVisible,
     userVisible,
+    cachedEffisMap,
   ]);
 
   useEffect(() => {
     const date = layerTime.slice(0, 10);
     heatLayerRef.current?.setParams({ time: date });
-    burntLayerRef.current?.setParams({ time: date });
     smokeLayerRef.current?.setUrl(
       `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_Aerosol_Type_Deep_Blue_Best_Estimate/default/${date}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.png`,
     );
@@ -1207,11 +1439,13 @@ export default function Dashboard() {
       id: "cems",
       icon: "EU",
       className: "source-icon--eu",
-      title: "Copernicus EMSR898",
-      detail: displaySatellite?.copernicus?.areaObservedAt
-        ? `Área observada ${formatSnapshotTime(displaySatellite.copernicus.areaObservedAt)}`
-        : "Perímetro y frente cartografiados de La Mierla",
-      url: CEMS_LA_MIERLA_URL,
+      title: `Copernicus ${displayFireMap?.source.activationCode || "EMSR900 · EMSR898"}`,
+      detail: displayFireMap?.source.areas?.length
+        ? `${displayFireMap.source.areas.length} áreas oficiales · última observación ${formatSnapshotTime(displayFireMap.source.areaObservedAt)}`
+        : displaySatellite?.copernicus?.areaObservedAt
+          ? `Última área observada ${formatSnapshotTime(displaySatellite.copernicus.areaObservedAt)}`
+          : "Perímetros y frentes oficiales de la zona Centro",
+      url: CEMS_CENTRAL_URL,
       read: displaySatellite?.copernicus?.readAt || displaySatellite?.layerCapturedAt?.copernicus,
       ok: Boolean(displaySatellite?.layers.copernicus),
     },
@@ -1223,18 +1457,20 @@ export default function Dashboard() {
       detail: displaySatellite?.effis?.latestUpdateInView
         ? `Producto diario, sin hora fija · zona Centro actualizada ${formatSnapshotTime(displaySatellite.effis.latestUpdateInView)}` +
           (displaySatellite.effis.stale ? " · metadatos: última lectura válida" : "") +
-          (displaySatellite.staleLayers?.burnt ? " · ráster: última copia válida" : "")
+          (displaySatellite.staleLayers?.effis ? " · geometrías: última copia válida" : "")
         : displaySatellite?.layerSourceDate?.burnt
-          ? `Producto diario, sin hora fija · imagen del ${formatSourceDate(displaySatellite.layerSourceDate.burnt)}` +
+          ? `Respaldo ráster del ${formatSourceDate(displaySatellite.layerSourceDate.burnt)}` +
             (displaySatellite.staleLayers?.burnt ? " · última copia válida" : "")
           : "Producto diario; FOCO comprueba la fuente una vez por hora",
       url: "https://forest-fire.emergency.copernicus.eu/apps/effis.csv/",
       read:
         displaySatellite?.effis?.readAt ||
+        displaySatellite?.layerCheckedAt?.effis ||
         displaySatellite?.layerCheckedAt?.burnt ||
         displaySatellite?.layerCapturedAt?.burnt,
       ok:
         Boolean(displaySatellite?.effis && !displaySatellite.effis.stale) ||
+        Boolean(displaySatellite?.layers.effis && !displaySatellite.errors?.effis) ||
         Boolean(displaySatellite?.layers.burnt && !displaySatellite.errors?.burnt),
     },
     {
@@ -1445,9 +1681,9 @@ export default function Dashboard() {
                       <small>Abrir @112cmadrid ↗</small>
                     </a>
                   )}
-                  <a className="news-card news-card--satellite" href={CEMS_LA_MIERLA_URL} target="_blank" rel="noreferrer">
+                  <a className="news-card news-card--satellite" href={CEMS_CENTRAL_URL} target="_blank" rel="noreferrer">
                     <span>
-                      <b>Copernicus EMSR898 · La Mierla</b>
+                      <b>Copernicus EMSR900 + EMSR898 · Zona Centro</b>
                       <time>
                         {displaySatellite?.copernicus?.areaObservedAt
                           ? formatSnapshotTime(displaySatellite.copernicus.areaObservedAt)
@@ -1455,11 +1691,11 @@ export default function Dashboard() {
                       </time>
                     </span>
                     <p>
-                      Perímetro cartografiado
+                      Perímetros cartografiados
                       {cachedFireMap?.source?.mappedAreaHectares
-                        ? `: ${Number(cachedFireMap.source.mappedAreaHectares).toLocaleString("es-ES")} ha`
+                        ? `: ${Number(cachedFireMap.source.mappedAreaHectares).toLocaleString("es-ES")} ha sumadas en los últimos productos de cada área`
                         : ""}
-                      . El frente y las llamas muestran su hora de observación, no una posición en tiempo real.
+                      . Cada frente y llama muestra su propia hora de observación, no una posición en tiempo real.
                     </p>
                     <small>Abrir activación oficial ↗</small>
                   </a>
@@ -1517,6 +1753,11 @@ export default function Dashboard() {
                       ? ` Sin ubicación: ${displayRegion.unmappedLocations.join(", ")}.`
                       : ""}
                   </p>
+                  {(activeList === "evacuado" || activeList === "confinado") && (
+                    <p className="geocode-note">
+                      Madrid se reconstruye desde su fuente oficial. Fuera de Madrid se muestran relaciones nominales oficiales fechadas: los partes estructurados disponibles no publican localidades evacuadas o confinadas y FOCO no las infiere.
+                    </p>
+                  )}
                   <div className="location-list">
                     {visiblePoints.map((point) => (
                       <button key={point.id} onClick={() => focusPoint(point)}>
@@ -1574,6 +1815,7 @@ export default function Dashboard() {
 
         <section className="map-pane" aria-label="Mapa de incendios de la Zona Centro">
           <div ref={mapNodeRef} className="map-canvas" />
+          <canvas ref={windCanvasRef} className="wind-particles" aria-hidden="true" />
           {!mapReady && !mapError && <div className="map-loading"><span></span><b>Preparando el mapa en directo…</b></div>}
           {mapError && <div className="map-error"><b>{mapError}</b><p>Comprueba tu conexión y vuelve a cargar.</p></div>}
 
@@ -1629,6 +1871,13 @@ export default function Dashboard() {
               >
                 <i className="legend-front"></i><span>Frente observado</span><em>{frontVisible ? "ON" : "OFF"}</em>
               </button>
+              <button
+                aria-pressed={windParticlesVisible}
+                onClick={() => setWindParticlesVisible(!windParticlesVisible)}
+                title="Pocas partículas muestran hacia dónde se desplaza el viento; se reducen en móvil y se desactivan con movimiento reducido"
+              >
+                <i className="legend-wind">→</i><span>Viento suave</span><em>{windParticlesVisible ? "ON" : "OFF"}</em>
+              </button>
               <button aria-pressed={smokeVisible} onClick={() => setSmokeVisible(!smokeVisible)}>
                 <i className="legend-smoke"></i><span>Humo VIIRS</span><em>{smokeVisible ? "ON" : "OFF"}</em>
               </button>
@@ -1645,7 +1894,7 @@ export default function Dashboard() {
             <button className="forecast-hint" onClick={() => requestForecast(40.4168, -3.7038, "Madrid")}>
               <span>↘</span>
               <b>Pulsa el mapa o un área de incendio</b>
-              <small>Previsión horaria de sol, viento y lluvia</small>
+              <small>Temperatura, cielo, viento y lluvia por hora</small>
             </button>
           )}
 
@@ -1702,7 +1951,7 @@ export default function Dashboard() {
                             <b>{date.toLocaleDateString("es-ES", { weekday: "short" }).replace(".", "")} {date.getDate()}</b>
                           </div>
                           <div className="weather-metrics">
-                            <div className="weather-metric"><small>Sol</small></div>
+                            <div className="weather-metric"><small>Tiempo</small></div>
                             <div className="weather-metric"><small>Viento</small></div>
                             <div className="weather-metric"><small>Lluvia</small></div>
                           </div>
@@ -1714,9 +1963,10 @@ export default function Dashboard() {
                         </div>
                         <div className="weather-metrics">
                           <div className="weather-metric sun">
-                            <strong className="sky-symbol" role="img" aria-label={sky.label} title={sky.label}>
+                            <strong className="sky-symbol" role="img" aria-label={`${sky.label}, ${hour.temperature} grados`} title={sky.label}>
                               {sky.symbol}
                             </strong>
+                            <span className="weather-temperature">{Math.round(hour.temperature)}°</span>
                           </div>
                           <div className="weather-metric wind">
                             <strong className="wind-stack" aria-label={`Viento ${compass(hour.windDirection)}, ${hour.wind} kilómetros por hora`}>

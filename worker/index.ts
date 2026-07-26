@@ -27,7 +27,7 @@ const securityHeaders: Record<string, string> = {
     "font-src 'self' data:",
     "form-action 'none'",
     "frame-ancestors 'none'",
-    "img-src 'self' data: blob: https://*.tile.openstreetmap.org https://maps.effis.emergency.copernicus.eu https://gibs.earthdata.nasa.gov",
+    "img-src 'self' data: blob: https://*.tile.openstreetmap.org https://gibs.earthdata.nasa.gov",
     "object-src 'none'",
     "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",

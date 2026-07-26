@@ -3,7 +3,7 @@
 Las tareas de esta lista son opcionales salvo indicación expresa. Deben
 realizarse respetando la disponibilidad descrita en `AGENTS.md`.
 
-## 1. Revisar fuentes de área recorrida — implementación en curso
+## 1. Revisar fuentes de área recorrida — completado el 26 de julio de 2026
 
 Revisar las fuentes que representan dónde ha habido incendio o superficie
 recorrida. La capa actual lleva más de un día sin cambios.
@@ -27,31 +27,68 @@ Hallazgos del 26 de julio de 2026:
 - La API estructurada utilizada por el visor EFFIS v2 seguía operativa y expone
   `lastupdate` por perímetro. La última modificación dentro de la zona Centro era
   del 24 de julio, aunque la misma fuente tenía cambios en España el día 26.
-- FOCO consultará los metadatos y el ráster EFFIS como máximo una vez por hora y
-  mostrará por separado la lectura y la última modificación real en la zona.
+- FOCO usa ahora como capa principal los perímetros GeoJSON de la API
+  estructurada, limitados a los últimos 30 días y a la vista Centro. La prueba
+  de integración obtuvo 39 geometrías válidas y conservó `lastupdate`, fecha del
+  incendio, superficie y municipio/provincia.
+- La API vectorial se consulta como máximo una vez por hora. El ráster WMS
+  legado queda únicamente como respaldo y se intenta como máximo cada seis
+  horas. Ambos conservan la última copia válida y separan la hora de lectura de
+  la fecha real del producto.
+- Los snapshots v4 congelan también el GeoJSON EFFIS; una vista histórica no
+  vuelve a consultar la fuente remota.
 
-## 2. Mejorar la previsión meteorológica
+## 2. Mejorar la previsión meteorológica — completado el 26 de julio de 2026
 
-- Revisar los símbolos de sol: el principal es pequeño, negro y poco legible.
-- Mostrar las temperaturas horarias que ya proporcione la predicción.
+- El sol principal usa un emoji de color, mayor y con contraste suficiente.
+- Cada hora muestra la temperatura de Open-Meteo junto a cielo, viento y lluvia.
 
-## 3. Automatizar evacuaciones fuera de Madrid
+## 3. Automatizar evacuaciones fuera de Madrid — fuente pendiente
 
 Incorporar evacuaciones y confinamientos de otras comunidades cuando existan
 fuentes oficiales estructuradas y suficientemente fiables.
 
-## 4. Analítica anónima condicionada a privacidad
+Revisión del 26 de julio de 2026:
+
+- Datos Abiertos de Castilla y León ofrece incendios, estado, medios, superficie
+  y posición, pero no una relación nominal de evacuaciones o confinamientos.
+- FIDIAS y las notas públicas de Castilla-La Mancha no exponen actualmente esa
+  relación mediante una fuente pública estructurada. El mapa público de la Red
+  de Alerta Nacional tampoco aporta localidades nominales para este fin.
+- FOCO mantiene las relaciones oficiales fechadas ya verificadas de Ávila y
+  Guadalajara, excluye los retornos nominalmente autorizados y no deduce
+  evacuaciones a partir de proximidad, nivel o perímetros. La interfaz explica
+  esta limitación. Se retomará la automatización cuando aparezca una fuente
+  adecuada.
+
+## 4. Analítica anónima condicionada a privacidad — completado y auditado
 
 Cualquier ampliación de la analítica anónima requiere autorización explícita de
 privacidad. Mantener minimización, DNT/GPC y ausencia de datos personales en
 claro.
 
-## 5. Frentes activos más precisos
+La implementación autorizada ya cuenta sesiones aproximadas sin cookies, rota
+diariamente el HMAC, respeta DNT/GPC, no guarda IP, agente ni ruta en claro y
+retiene 90 días. `/visitas` no se enlaza públicamente, requiere la clave local y
+no la persiste en el navegador. No se amplió la recogida de datos.
+
+## 5. Frentes activos más precisos — completado el 26 de julio de 2026
 
 Incorporar frentes activos oficiales o de mayor precisión para incendios donde
 hoy solo se dispone de área EFFIS y hotspots VIIRS.
 
-## 6. Partículas de viento suaves
+FOCO integra todas las áreas entregadas de Copernicus EMSR900 y EMSR898:
+Brieva, Villa del Prado, La Atalaya, La Mierla y Selas. Cada perímetro, frente y
+llama usa el producto más reciente que contiene esa geometría y muestra su hora
+propia de observación. Los círculos orientativos solo se ocultan cuando existe
+una correspondencia explícita con un perímetro oficial.
+
+## 6. Partículas de viento suaves — completado el 26 de julio de 2026
 
 Valorar una visualización de pocas partículas, limitada en FPS, reducida en
 móviles y desactivada cuando el usuario solicite movimiento reducido.
+
+La capa usa 12 partículas en móvil o 24 en escritorio, un máximo de 20 FPS y
+una densidad/velocidad suave vinculada al viento actual. Se pausa con la pestaña
+oculta, no captura clics, respeta `prefers-reduced-motion` y dispone de un
+interruptor propio en la leyenda.

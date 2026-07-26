@@ -46,6 +46,10 @@ y volver a iniciar `foco-app.service`.
 - Los pines de situación no solicitan previsión; las grandes áreas aproximadas
   de incendio y los clics libres en el mapa sí pueden hacerlo.
 - El indicador de previsión puntual es una flecha azul orientada con el viento.
+- Las partículas de viento deben seguir siendo escasas, limitadas a 20 FPS,
+  pausarse con la pestaña oculta y respetar `prefers-reduced-motion`.
+- Fuera de Madrid no inferir evacuaciones o confinamientos desde perímetros,
+  niveles o proximidad: exigir una relación oficial nominal o estructurada.
 - Los snapshots históricos deben ser inmutables y no consultar fuentes remotas.
 - Una captura remota inválida o transparente no sustituye una copia válida.
 - Una capa conservada debe marcarse como desactualizada y exponer la fecha real
@@ -60,12 +64,15 @@ y volver a iniciar `foco-app.service`.
 - Estado de Madrid: 2 minutos.
 - Región, noticias, manifiesto satelital y snapshots: 5 minutos.
 - Calidad del aire MITECO: 15 minutos, con últimas lecturas válidas limitadas.
-- Previsión Open-Meteo: 15 minutos mientras el panel está abierto.
+- Previsión Open-Meteo: 15 minutos mientras el panel está abierto; viento
+  ambiental para partículas: 30 minutos.
 - Capturas: comprobación cada 5 minutos y snapshot inmutable al inicio de hora.
-- EFFIS: producto diario, sin hora fija; consultar ráster y metadatos como
-  máximo una vez por hora. NASA GIBS y Copernicus pueden publicar con cadencias
-  distintas a las consultas de FOCO; siempre distinguir hora de lectura, fecha
-  del producto y antigüedad real.
+- EFFIS: producto diario, sin hora fija; consultar el vector estructurado como
+  máximo una vez por hora y el ráster legado de respaldo cada seis horas.
+- Copernicus EMSR900 y EMSR898: todas las AOI con producto entregado; metadatos
+  cacheados quince minutos. NASA GIBS y Copernicus pueden publicar con
+  cadencias distintas a las consultas de FOCO; siempre distinguir hora de
+  lectura, fecha del producto y antigüedad real.
 
 ## Continuidad
 

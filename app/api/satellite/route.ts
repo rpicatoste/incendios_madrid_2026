@@ -26,7 +26,7 @@ export async function GET(request: Request) {
     return new Response(contents, {
       headers: {
         "Content-Type":
-          layer === "copernicus"
+          layer === "copernicus" || layer === "effis"
             ? "application/geo+json"
             : isManifest
               ? "application/json"

@@ -1,9 +1,8 @@
 import type { FeatureCollection, MultiLineString, MultiPoint, MultiPolygon } from "geojson";
 
-const ACTIVATION_CODE = "EMSR898";
-const ACTIVATION_URL = `https://mapping.emergency.copernicus.eu/activations/${ACTIVATION_CODE}/`;
-const API_URL =
-  `https://rapidmapping.emergency.copernicus.eu/backend/dashboard-api/public-activations/?code=${ACTIVATION_CODE}`;
+const ACTIVATION_CODES = ["EMSR900", "EMSR898"] as const;
+const API_ROOT =
+  "https://rapidmapping.emergency.copernicus.eu/backend/dashboard-api/public-activations/";
 const DATA_HOST = "rapidmapping-viewer.s3.eu-west-1.amazonaws.com";
 const TOLERANCE = 0.00025;
 const METADATA_TTL_MS = 15 * 60 * 1000;
@@ -12,15 +11,27 @@ type Point = [number, number];
 type Product = {
   id: number;
   type: string;
+  feasible?: boolean;
   monitoring: boolean;
   monitoringNumber: number;
   images?: { acquisitionTime?: string }[];
   layers?: { name: string; format: string; json?: string }[];
-  stats?: Record<string, { None?: { affected?: number } }>;
+  stats?: Record<string, { None?: { affected?: number | string; total?: number | string } }>;
   version?: { deliveryTime?: string };
 };
 
-type Activation = { aois?: { products?: Product[] }[] };
+type ActivationAoi = {
+  name?: string;
+  number?: number;
+  products?: Product[];
+};
+
+type Activation = {
+  code?: string;
+  name?: string;
+  aois?: ActivationAoi[];
+};
+
 type RemoteGeometry =
   | { type: "Polygon"; coordinates: Point[][] }
   | { type: "MultiPolygon"; coordinates: Point[][][] }
@@ -35,6 +46,31 @@ type RemoteFeatureCollection = {
 export type CopernicusFeatureProperties = {
   kind: "burnt-area" | "fire-front" | "active-flame";
   label: string;
+  activationCode?: string;
+  areaName?: string;
+  sourceUrl?: string;
+  product?: string;
+  observedAt?: string;
+  deliveredAt?: string | null;
+  mappedAreaHectares?: number | null;
+  fireIds?: string[];
+};
+
+export type CopernicusAreaSource = {
+  activationCode: string;
+  activationName: string;
+  areaName: string;
+  areaNumber: number;
+  url: string;
+  fireIds: string[];
+  areaProduct: string;
+  areaObservedAt: string;
+  areaDeliveredAt: string | null;
+  mappedAreaHectares: number | null;
+  activeFlames: number;
+  frontProduct: string | null;
+  frontObservedAt: string | null;
+  frontKilometres: number | null;
 };
 
 export type CopernicusFireMap = FeatureCollection<
@@ -54,6 +90,7 @@ export type CopernicusFireMap = FeatureCollection<
     frontProduct: string | null;
     frontObservedAt: string | null;
     frontKilometres: number | null;
+    areas: CopernicusAreaSource[];
   };
 };
 
@@ -63,13 +100,19 @@ type ProductGeometry = {
   points: Point[];
 };
 
-let metadataCache:
-  | { expiresAt: number; activation: Activation }
-  | undefined;
+const metadataCache = new Map<
+  string,
+  { expiresAt: number; activation: Activation }
+>();
 const productGeometryCache = new Map<string, Promise<ProductGeometry>>();
+
+const activationUrl = (code: string) =>
+  `https://mapping.emergency.copernicus.eu/activations/${code}/`;
 
 const fetchJson = async <T,>(url: string): Promise<T> => {
   const response = await fetch(url, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(30000),
     headers: { "User-Agent": "FOCO-Centro/2.0" },
   });
   if (!response.ok) throw new Error(`Copernicus respondió ${response.status}`);
@@ -92,9 +135,21 @@ const observedAt = (product: Product) =>
   product.images?.[0]?.acquisitionTime || product.version?.deliveryTime || "";
 
 const productKey = (product: Product) =>
-  product.monitoring
-    ? `DEL_MONIT${String(product.monitoringNumber).padStart(2, "0")}`
-    : "DEL_PRODUCT";
+  product.type === "FEP"
+    ? "FEP_PRODUCT"
+    : product.monitoring
+      ? `DEL_MONIT${String(product.monitoringNumber).padStart(2, "0")}`
+      : "DEL_PRODUCT";
+
+const statNumber = (
+  product: Product | null,
+  category: string,
+  field: "affected" | "total" = "affected",
+) => {
+  const value = product?.stats?.[category]?.None?.[field];
+  const number = typeof value === "string" ? Number(value) : value;
+  return typeof number === "number" && Number.isFinite(number) ? number : 0;
+};
 
 const squareDistance = (a: Point, b: Point) => {
   const dx = a[0] - b[0];
@@ -178,7 +233,7 @@ const simplifyRing = (coordinates: Point[]) => {
       : coordinates;
   const simplified = simplifyLine(openRing);
   const valid = simplified.length >= 3 ? simplified : openRing.map(roundPoint);
-  return [...valid, valid[0]];
+  return valid.length ? [...valid, valid[0]] : [];
 };
 
 const polygonsFrom = (collection: RemoteFeatureCollection): Point[][][] =>
@@ -202,18 +257,23 @@ const pointsFrom = (collection: RemoteFeatureCollection): Point[] =>
     return [];
   });
 
-const getActivation = async () => {
-  if (metadataCache && metadataCache.expiresAt > Date.now()) {
-    return metadataCache.activation;
-  }
-  const response = await fetchJson<Activation & { results?: Activation[] }>(API_URL);
+const getActivation = async (code: string) => {
+  const cached = metadataCache.get(code);
+  if (cached && cached.expiresAt > Date.now()) return cached.activation;
+  const url = new URL(API_ROOT);
+  url.searchParams.set("code", code);
+  const response = await fetchJson<Activation & { results?: Activation[] }>(url.toString());
   const activation = response.results?.[0] || response;
-  metadataCache = { expiresAt: Date.now() + METADATA_TTL_MS, activation };
+  if (!activation?.aois?.length) throw new Error(`Sin áreas para ${code}`);
+  metadataCache.set(code, {
+    expiresAt: Date.now() + METADATA_TTL_MS,
+    activation,
+  });
   return activation;
 };
 
 const getProductGeometry = async (product: Product): Promise<ProductGeometry> => {
-  const key = `${productKey(product)}:${observedAt(product)}`;
+  const key = `${product.id}:${observedAt(product)}`;
   const cached = productGeometryCache.get(key);
   if (cached) return cached;
 
@@ -233,8 +293,10 @@ const getProductGeometry = async (product: Product): Promise<ProductGeometry> =>
         : Promise.resolve({ features: [] }),
     ]);
     return {
-      polygons: polygonsFrom(area).map((polygon) => polygon.map(simplifyRing)),
-      lines: linesFrom(fronts).map(simplifyLine),
+      polygons: polygonsFrom(area)
+        .map((polygon) => polygon.map(simplifyRing).filter((ring) => ring.length >= 4))
+        .filter((polygon) => polygon.length),
+      lines: linesFrom(fronts).map(simplifyLine).filter((line) => line.length >= 2),
       points: pointsFrom(flames).map(roundPoint),
     };
   })();
@@ -247,85 +309,181 @@ const getProductGeometry = async (product: Product): Promise<ProductGeometry> =>
   }
 };
 
-export const getCopernicusFireMap = async (): Promise<CopernicusFireMap> => {
-  const activation = await getActivation();
-  const products = [...(activation.aois?.[0]?.products || [])]
-    .filter((product: Product) => product.type === "DEL")
-    .sort(
-      (a: Product, b: Product) =>
-        new Date(observedAt(a)).getTime() - new Date(observedAt(b)).getTime(),
-    );
-  if (!products.length) throw new Error(`No hay delimitación para ${ACTIVATION_CODE}`);
+const fireIdsFor = (activationCode: string, areaNumber: number) => {
+  const mappings: Record<string, string[]> = {
+    "EMSR900:2": ["sierra-oeste"],
+    "EMSR900:3": ["burgohondo-fire", "sierra-oeste"],
+    "EMSR898:1": ["la-mierla-fire"],
+    "EMSR898:2": ["la-mierla-fire"],
+  };
+  return mappings[`${activationCode}:${areaNumber}`] || [];
+};
 
-  const latestProduct = products.at(-1)!;
-  const areaProductIndex = products.reduce(
-    (bestIndex, product, index) =>
-      (product.stats?.["Burnt area"]?.None?.affected || 0) >
-      (products[bestIndex]?.stats?.["Burnt area"]?.None?.affected || 0)
-        ? index
-        : bestIndex,
-    0,
+const latestProductWith = (products: Product[], fragment: string) =>
+  [...products]
+    .filter((product) => product.feasible !== false && officialJsonUrl(product, fragment))
+    .sort((left, right) => Date.parse(observedAt(left)) - Date.parse(observedAt(right)))
+    .at(-1) || null;
+
+const buildAoi = async (
+  activationCode: string,
+  activationName: string,
+  aoi: ActivationAoi,
+) => {
+  const products = (aoi.products || []).filter((product) =>
+    ["DEL", "FEP"].includes(product.type),
   );
-  const areaProduct = products[areaProductIndex];
-  const latestFrontProduct =
-    [...products]
-      .reverse()
-      .find((product) => officialJsonUrl(product, "_observedEventL_")) || null;
+  const deliveredProducts = products.filter((product) => product.layers?.length);
+  const deliveredDelineations = deliveredProducts.some((product) => product.type === "DEL")
+    ? deliveredProducts.filter((product) => product.type === "DEL")
+    : deliveredProducts;
+  const areaProduct = latestProductWith(deliveredDelineations, "_observedEventA_");
+  if (!areaProduct) return null;
+  const frontProduct = latestProductWith(deliveredProducts, "_observedEventL_");
+  const flameProduct = latestProductWith(deliveredProducts, "_observedEventP_");
   const uniqueProducts = [...new Map(
-    [areaProduct, latestProduct, latestFrontProduct]
-      .filter(Boolean)
-      .map((product) => [productKey(product as Product), product as Product]),
+    [areaProduct, frontProduct, flameProduct]
+      .filter((product): product is Product => Boolean(product))
+      .map((product) => [product.id, product]),
   ).values()];
   const geometryEntries = await Promise.all(
-    uniqueProducts.map(async (product) => [productKey(product), await getProductGeometry(product)] as const),
+    uniqueProducts.map(async (product) => [product.id, await getProductGeometry(product)] as const),
   );
   const geometryByProduct = new Map(geometryEntries);
-  const areaGeometry = geometryByProduct.get(productKey(areaProduct))!;
-  const latestGeometry = geometryByProduct.get(productKey(latestProduct))!;
-  const latestFrontGeometry = latestFrontProduct
-    ? geometryByProduct.get(productKey(latestFrontProduct))
-    : null;
-  const mappedArea = areaProduct.stats?.["Burnt area"]?.None?.affected || 0;
+  const areaGeometry = geometryByProduct.get(areaProduct.id)!;
+  const frontGeometry = frontProduct ? geometryByProduct.get(frontProduct.id) : undefined;
+  const flameGeometry = flameProduct ? geometryByProduct.get(flameProduct.id) : undefined;
+  if (!areaGeometry.polygons.length) return null;
 
+  const areaNumber = aoi.number || 0;
+  const areaName = aoi.name || `Área ${areaNumber}`;
+  const url = activationUrl(activationCode);
+  const fireIds = fireIdsFor(activationCode, areaNumber);
+  const mappedAreaHectares =
+    statNumber(areaProduct, "Burnt area", "affected") ||
+    statNumber(areaProduct, "Burnt area", "total") ||
+    null;
+  const source: CopernicusAreaSource = {
+    activationCode,
+    activationName,
+    areaName,
+    areaNumber,
+    url,
+    fireIds,
+    areaProduct: productKey(areaProduct),
+    areaObservedAt: observedAt(areaProduct),
+    areaDeliveredAt: areaProduct.version?.deliveryTime || null,
+    mappedAreaHectares,
+    activeFlames: statNumber(flameProduct, "Active Flames"),
+    frontProduct: frontProduct ? productKey(frontProduct) : null,
+    frontObservedAt: frontProduct ? observedAt(frontProduct) : null,
+    frontKilometres: statNumber(frontProduct, "Fire Fronts") || null,
+  };
+  const commonProperties = {
+    activationCode,
+    areaName,
+    sourceUrl: url,
+    fireIds,
+  };
+  const features: CopernicusFireMap["features"] = [
+    {
+      type: "Feature",
+      properties: {
+        ...commonProperties,
+        kind: "burnt-area",
+        label: `${areaName} · área cartografiada`,
+        product: source.areaProduct,
+        observedAt: source.areaObservedAt,
+        deliveredAt: source.areaDeliveredAt,
+        mappedAreaHectares,
+      },
+      geometry: { type: "MultiPolygon", coordinates: areaGeometry.polygons },
+    },
+  ];
+  if (frontGeometry?.lines.length) {
+    features.push({
+      type: "Feature",
+      properties: {
+        ...commonProperties,
+        kind: "fire-front",
+        label: `${areaName} · frente observado`,
+        product: source.frontProduct || undefined,
+        observedAt: source.frontObservedAt || undefined,
+      },
+      geometry: { type: "MultiLineString", coordinates: frontGeometry.lines },
+    });
+  }
+  if (flameGeometry?.points.length) {
+    features.push({
+      type: "Feature",
+      properties: {
+        ...commonProperties,
+        kind: "active-flame",
+        label: `${areaName} · llama activa observada`,
+        product: flameProduct ? productKey(flameProduct) : undefined,
+        observedAt: flameProduct ? observedAt(flameProduct) : undefined,
+      },
+      geometry: { type: "MultiPoint", coordinates: flameGeometry.points },
+    });
+  }
+  return { source, features };
+};
+
+export const getCopernicusFireMap = async (): Promise<CopernicusFireMap> => {
+  const activationResults = await Promise.allSettled(
+    ACTIVATION_CODES.map(async (code) => ({ code, activation: await getActivation(code) })),
+  );
+  const aoiResults = await Promise.allSettled(
+    activationResults.flatMap((result) =>
+      result.status === "fulfilled"
+        ? (result.value.activation.aois || []).map((aoi) =>
+            buildAoi(
+              result.value.code,
+              result.value.activation.name || result.value.code,
+              aoi,
+            ),
+          )
+        : [],
+    ),
+  );
+  const areas = aoiResults.flatMap((result) =>
+    result.status === "fulfilled" && result.value ? [result.value] : [],
+  );
+  if (!areas.length) {
+    throw new Error("No hay productos Copernicus entregados para la zona Centro");
+  }
+  const areaSources = areas.map((area) => area.source);
+  const latestArea = [...areaSources].sort(
+    (left, right) => Date.parse(right.areaObservedAt) - Date.parse(left.areaObservedAt),
+  )[0];
+  const latestFront = [...areaSources]
+    .filter((area) => area.frontObservedAt)
+    .sort(
+      (left, right) =>
+        Date.parse(right.frontObservedAt || "") - Date.parse(left.frontObservedAt || ""),
+    )[0];
+  const activationCode = [...new Set(areaSources.map((area) => area.activationCode))].join(", ");
   return {
     type: "FeatureCollection",
     source: {
-      activationCode: ACTIVATION_CODE,
-      label: `Copernicus EMS Rapid Mapping · ${ACTIVATION_CODE}`,
-      url: ACTIVATION_URL,
+      activationCode,
+      label: `Copernicus EMS Rapid Mapping · ${activationCode}`,
+      url: latestArea.url,
       readAt: new Date().toISOString(),
-      areaProduct: productKey(areaProduct),
-      areaObservedAt: observedAt(areaProduct),
-      areaDeliveredAt: areaProduct.version?.deliveryTime || null,
-      mappedAreaHectares: mappedArea || null,
-      activeFlames: latestProduct.stats?.["Active Flames"]?.None?.affected || 0,
-      frontProduct: latestFrontProduct ? productKey(latestFrontProduct) : null,
-      frontObservedAt: latestFrontProduct ? observedAt(latestFrontProduct) : null,
+      areaProduct: latestArea.areaProduct,
+      areaObservedAt: latestArea.areaObservedAt,
+      areaDeliveredAt: latestArea.areaDeliveredAt,
+      mappedAreaHectares:
+        areaSources.reduce((total, area) => total + (area.mappedAreaHectares || 0), 0) ||
+        null,
+      activeFlames: areaSources.reduce((total, area) => total + area.activeFlames, 0),
+      frontProduct: latestFront?.frontProduct || null,
+      frontObservedAt: latestFront?.frontObservedAt || null,
       frontKilometres:
-        latestFrontProduct?.stats?.["Fire Fronts"]?.None?.affected || null,
+        areaSources.reduce((total, area) => total + (area.frontKilometres || 0), 0) ||
+        null,
+      areas: areaSources,
     },
-    features: [
-      {
-        type: "Feature",
-        properties: { kind: "burnt-area", label: "Área recorrida cartografiada" },
-        geometry: {
-          type: "MultiPolygon",
-          coordinates: areaGeometry.polygons,
-        },
-      },
-      {
-        type: "Feature",
-        properties: { kind: "fire-front", label: "Frente observado" },
-        geometry: {
-          type: "MultiLineString",
-          coordinates: latestFrontGeometry?.lines || [],
-        },
-      },
-      {
-        type: "Feature",
-        properties: { kind: "active-flame", label: "Llama activa observada" },
-        geometry: { type: "MultiPoint", coordinates: latestGeometry.points },
-      },
-    ],
+    features: areas.flatMap((area) => area.features),
   };
 };

@@ -2,7 +2,7 @@ import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { inflateSync } from "node:zlib";
 import {
-  getEffisAreaStatus,
+  getEffisAreaBundle,
   type EffisAreaStatus,
 } from "./effis-area-status";
 
@@ -10,9 +10,15 @@ export const SATELLITE_BOUNDS: [[number, number], [number, number]] = [
   [39.35, -5.9],
   [42.15, -1.7],
 ];
-export const SATELLITE_LAYERS = ["burnt", "heat", "smoke", "copernicus"] as const;
+export const SATELLITE_LAYERS = [
+  "burnt",
+  "heat",
+  "smoke",
+  "copernicus",
+  "effis",
+] as const;
 export type SatelliteLayer = (typeof SATELLITE_LAYERS)[number];
-type RasterLayer = Exclude<SatelliteLayer, "copernicus">;
+type RasterLayer = "burnt" | "heat" | "smoke";
 
 type CopernicusMap = {
   source?: {
@@ -35,7 +41,7 @@ const RASTER_DIMENSIONS: Record<RasterLayer, { width: number; height: number }> 
 };
 
 export type SatelliteSnapshot = {
-  schemaVersion?: 2 | 3;
+  schemaVersion?: 2 | 3 | 4;
   capturedAt: string;
   bounds: typeof SATELLITE_BOUNDS;
   layers: Partial<Record<SatelliteLayer, true>>;
@@ -62,7 +68,11 @@ const dataDirectory =
 const satelliteDirectory = join(dataDirectory, "satellite");
 
 const layerPath = (hourId: string, layer: SatelliteLayer) =>
-  join(satelliteDirectory, hourId, `${layer}.${layer === "copernicus" ? "json" : "png"}`);
+  join(
+    satelliteDirectory,
+    hourId,
+    `${layer}.${layer === "copernicus" || layer === "effis" ? "json" : "png"}`,
+  );
 const manifestPath = (storageId: string) =>
   join(satelliteDirectory, storageId, "manifest.json");
 
@@ -71,7 +81,34 @@ const LOOKBACK_DAYS: Record<RasterLayer, number> = {
   heat: 2,
   smoke: 2,
 };
-const BURNT_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
+// El ráster legado es solo un respaldo del vector estructurado EFFIS, cuyo
+// producto es diario. Evitamos castigar el WMS inestable con consultas horarias.
+const BURNT_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+const isRasterLayer = (layer: SatelliteLayer): layer is RasterLayer =>
+  layer === "burnt" || layer === "heat" || layer === "smoke";
+
+const storedLayerIsValid = (layer: SatelliteLayer, bytes: Uint8Array) => {
+  if (isRasterLayer(layer)) return pngHasVisiblePixels(bytes);
+  try {
+    const value = JSON.parse(new TextDecoder().decode(bytes)) as Record<
+      string,
+      unknown
+    >;
+    if (!value || typeof value !== "object") return false;
+    if (layer === "effis") {
+      return value.type === "FeatureCollection" && Array.isArray(value.features);
+    }
+    return (
+      value.type === "FeatureCollection" &&
+      Array.isArray(value.features) &&
+      Boolean(value.source) &&
+      typeof value.source === "object"
+    );
+  } catch {
+    return false;
+  }
+};
 
 const sourceUrl = (layer: RasterLayer, date: string) => {
   const isEffis = layer === "burnt";
@@ -289,6 +326,7 @@ export const captureSatelliteSnapshot = async (
     : Infinity;
   const canReuseBurnt =
     Boolean(previous?.layers.burnt) && burntAge >= 0 && burntAge < BURNT_REFRESH_INTERVAL_MS;
+  const effisBundlePromise = getEffisAreaBundle(new Date(capturedAt));
   const results = await Promise.allSettled([
     canReuseBurnt
       ? reusePng(storageId, "burnt", previous!)
@@ -296,7 +334,11 @@ export const captureSatelliteSnapshot = async (
     capturePng(storageId, "heat", date),
     capturePng(storageId, "smoke", date),
     atomicWrite(layerPath(storageId, "copernicus"), JSON.stringify(copernicusMap)),
-    getEffisAreaStatus(new Date(capturedAt)),
+    effisBundlePromise.then(async (bundle) => {
+      await atomicWrite(layerPath(storageId, "effis"), JSON.stringify(bundle.map));
+      return bundle.map;
+    }),
+    effisBundlePromise.then((bundle) => bundle.status),
   ]);
   const layers: SatelliteSnapshot["layers"] = {};
   const layerCapturedAt: SatelliteSnapshot["layerCapturedAt"] = {};
@@ -310,7 +352,7 @@ export const captureSatelliteSnapshot = async (
     if (result.status === "fulfilled") {
       layers[layer] = true;
       const reused =
-        layer !== "copernicus" &&
+        isRasterLayer(layer) &&
         Boolean((result.value as { reused?: true }).reused);
       layerCapturedAt[layer] = reused
         ? previous?.layerCapturedAt?.[layer] || capturedAt
@@ -320,7 +362,7 @@ export const captureSatelliteSnapshot = async (
           previous?.layerCapturedAt?.[layer] ||
           capturedAt
         : capturedAt;
-      if (layer !== "copernicus") {
+      if (isRasterLayer(layer)) {
         const sourceDate = (result.value as { sourceDate: string }).sourceDate;
         layerSourceDate[layer] = sourceDate;
         rasterDimensions[layer] = RASTER_DIMENSIONS[layer];
@@ -337,12 +379,12 @@ export const captureSatelliteSnapshot = async (
     if (!previous?.layers[layer]) return;
     try {
       const existingBytes = await readFile(layerPath(storageId, layer));
-      if (layer !== "copernicus" && !pngHasVisiblePixels(existingBytes)) return;
+      if (!storedLayerIsValid(layer, existingBytes)) return;
       layers[layer] = true;
       staleLayers[layer] = true;
       layerCapturedAt[layer] =
         previous.layerCapturedAt?.[layer] || previous.capturedAt;
-      if (layer !== "copernicus") {
+      if (isRasterLayer(layer)) {
         layerSourceDate[layer] =
           previous.layerSourceDate?.[layer] || previous.capturedAt.slice(0, 10);
         rasterDimensions[layer] =
@@ -369,7 +411,7 @@ export const captureSatelliteSnapshot = async (
           }
         : undefined;
   const snapshot: SatelliteSnapshot = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     capturedAt,
     bounds: SATELLITE_BOUNDS,
     layers,

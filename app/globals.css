@@ -857,6 +857,16 @@ button {
   background: #e2e7df;
 }
 
+.wind-particles {
+  position: absolute;
+  inset: 0;
+  z-index: 450;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: .82;
+}
+
 .map-canvas::after {
   content: "";
   position: absolute;
@@ -1287,6 +1297,15 @@ button {
   flex: 0 0 14px;
   border-top: 3px dashed #e2a317;
 }
+.legend-wind {
+  width: 14px;
+  flex: 0 0 14px;
+  color: #2488c4;
+  font-size: 15px;
+  font-style: normal;
+  font-weight: 900;
+  line-height: 1;
+}
 .legend-smoke {
   width: 13px;
   height: 10px;
@@ -1584,9 +1603,28 @@ button {
 
 .weather-metric .sky-symbol {
   font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
-  font-size: 17px;
+  font-size: 22px;
   line-height: 1;
   overflow: visible;
+  color: #eaa51a;
+  filter: drop-shadow(0 1px 1px rgba(101, 68, 10, .18));
+}
+
+.weather-metric.sun {
+  flex-direction: column;
+  gap: 0;
+}
+
+.weather-temperature {
+  display: block;
+  color: #263b3d;
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.now .weather-temperature {
+  color: white;
 }
 
 .weather-metric.wind strong {
@@ -2028,6 +2066,10 @@ button {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .wind-particles {
+    display: none;
+  }
+
   *,
   *::before,
   *::after {
