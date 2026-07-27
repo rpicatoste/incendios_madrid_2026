@@ -100,3 +100,10 @@ dispone de un interruptor propio en la leyenda. El 27 de julio se unificó la
 convención visual: Open-Meteo informa de dónde viene el viento y FOCO suma 180°
 para que partículas, flecha del punto y flechas horarias indiquen todas hacia
 dónde se desplaza el aire.
+
+La revisión espacial posterior sustituyó el único vector de Madrid por una malla
+9×7 de la zona Centro. El servidor la descarga únicamente cuando alguien activa
+la capa, comparte la respuesta, la conserva una hora en disco y no ejecuta ningún
+refresco programado sin usuarios. El cliente interpola componentes este/norte en
+cada posición; cada trazo vive entre 1,8 y 4,2 segundos, se desvanece y reaparece
+en un punto aleatorio. Pulsar una previsión puntual ya no cambia el campo global.

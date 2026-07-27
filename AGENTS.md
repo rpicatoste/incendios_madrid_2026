@@ -50,9 +50,11 @@ y volver a iniciar `foco-app.service`.
   origen meteorológica: convertirla siempre sumando 180° antes de dibujar una
   flecha con punta o animar el movimiento.
 - La capa de viento empieza desactivada: mientras siga apagada no solicita el
-  viento ambiental ni ejecuta animación. Al activarla usa 18 partículas en móvil
-  o 34 en escritorio, limitadas a 15 FPS, se pausa con la pestaña oculta y
-  respeta `prefers-reduced-motion`.
+  campo ambiental ni ejecuta animación. Al activarla descarga bajo demanda una
+  malla 9×7 compartida por el servidor y cacheada una hora; no hay precalentado
+  ni consultas sin usuarios. El navegador interpola el vector local y usa
+  partículas de vida corta: 18 en móvil o 34 en escritorio, limitadas a 15 FPS,
+  pausadas con la pestaña oculta y respetando `prefers-reduced-motion`.
 - Fuera de Madrid no inferir evacuaciones o confinamientos desde perímetros,
   niveles o proximidad: exigir una relación oficial nominal o estructurada.
 - Los snapshots históricos deben ser inmutables y no consultar fuentes remotas.
@@ -76,8 +78,9 @@ y volver a iniciar `foco-app.service`.
   última lectura válida por estación y marcarla como recuperada si MITECO omite
   el índice; servir caché vencida inmediatamente mientras se refresca en segundo
   plano.
-- Previsión Open-Meteo: 15 minutos mientras el panel está abierto; viento
-  ambiental para partículas: 30 minutos.
+- Previsión Open-Meteo: 15 minutos mientras el panel está abierto; campo de
+  viento para partículas: caché persistente de una hora, creada o renovada solo
+  cuando algún usuario activa la capa.
 - Capturas: comprobación cada 5 minutos y snapshot inmutable al inicio de hora.
   Los PNG se reutilizan en el servidor: calor 30 minutos, humo 6 horas y ráster
   EFFIS legado 6 horas. Las URLs cliente versionadas son inmutables.

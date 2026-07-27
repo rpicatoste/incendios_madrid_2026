@@ -107,6 +107,8 @@ test("keeps upstream access fixed and the production listener private", async ()
     madridStatus,
     liveRegion,
     regionData,
+    windRoute,
+    windField,
     fnmtCertificate,
   ] = await Promise.all([
     readFile(new URL("../app/api/air/route.ts", import.meta.url), "utf8"),
@@ -124,6 +126,8 @@ test("keeps upstream access fixed and the production listener private", async ()
     readFile(new URL("../lib/madrid-status.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/live-region.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/region-data.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/wind-field/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/wind-field.ts", import.meta.url), "utf8"),
     readFile(new URL("../ops/fnmt-components.pem", import.meta.url), "utf8"),
   ]);
 
@@ -257,7 +261,13 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(dashboard, /const windMovementDirection/);
   assert.match(dashboard, /windFromDegrees \+ 180/);
   assert.match(dashboard, /currentWindMovementDirection === null/);
-  assert.match(dashboard, /windMovementDirection\(particleWindDirection\)/);
+  assert.match(dashboard, /fetch\("\/api\/wind-field"/);
+  assert.match(dashboard, /if \(!windParticlesVisible\) return/);
+  assert.match(dashboard, /sampleWindField/);
+  assert.match(dashboard, /containerPointToLatLng/);
+  assert.match(dashboard, /const lifetime = 1\.8/);
+  assert.match(dashboard, /Object\.assign\(particle, makeParticle\(\)\)/);
+  assert.doesNotMatch(dashboard, /latitude: "40\.4168"/);
   assert.equal(dashboard.includes("REFRESH_INTERVALS.forecast"), true);
   assert.equal(dashboard.includes('current: "wind_direction_10m,wind_speed_10m"'), true);
   assert.equal(dashboard.includes('forecast_hours: "12"'), true);
@@ -324,6 +334,18 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(regionData, /guadalajaraPoint\("hiendelaencina"/);
   assert.match(regionData, /guadalajaraPoint\("albendiego"/);
   assert.match(regionData, /20 jul · última relación nominal/);
+  assert.match(windRoute, /getWindField/);
+  assert.match(windRoute, /must-revalidate/);
+  assert.match(windField, /api\.open-meteo\.com\/v1\/forecast/);
+  assert.match(windField, /CACHE_TTL_MS = 60 \* 60 \* 1000/);
+  assert.match(windField, /FAILURE_RETRY_MS = 5 \* 60 \* 1000/);
+  assert.match(windField, /rows: 7/);
+  assert.match(windField, /columns: 9/);
+  assert.match(windField, /wind-field\.json/);
+  assert.match(windField, /mode: 0o600/);
+  assert.match(windField, /refreshPromise \|\|=/);
+  assert.match(windField, /sourceOk: false/);
+  assert.doesNotMatch(windField, /setInterval/);
   assert.match(css, /\.topbar\s*\{\s*height:\s*46px;/);
   assert.match(css, /\.forecast-panel\.open\s*\{\s*height:\s*176px;/);
   assert.match(css, /\.wind-particles/);

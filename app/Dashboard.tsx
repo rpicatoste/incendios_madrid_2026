@@ -57,8 +57,27 @@ type ForecastCacheEntry = {
   expiresAt: number;
   rows: ForecastHour[];
   windDirection: number;
-  windSpeed: number;
 };
+
+type WindField = {
+  schemaVersion: 1;
+  fetchedAt: string;
+  validAt: string;
+  expiresAt: string;
+  sourceOk: boolean;
+  stale?: true;
+  grid: {
+    south: number;
+    north: number;
+    west: number;
+    east: number;
+    rows: number;
+    columns: number;
+  };
+  vectors: Array<[eastKmh: number, northKmh: number]>;
+};
+
+type WindFieldState = "idle" | "loading" | "refreshing" | "ready" | "stale" | "error";
 
 type LiveStatus = {
   lastUpdated: string;
@@ -213,6 +232,53 @@ const compass = (degrees: number) => {
 const windMovementDirection = (windFromDegrees: number) =>
   ((windFromDegrees + 180) % 360 + 360) % 360;
 
+const sampleWindField = (field: WindField, lat: number, lon: number) => {
+  const { grid, vectors } = field;
+  if (
+    lat < grid.south ||
+    lat > grid.north ||
+    lon < grid.west ||
+    lon > grid.east ||
+    grid.rows < 2 ||
+    grid.columns < 2 ||
+    vectors.length !== grid.rows * grid.columns
+  ) {
+    return null;
+  }
+
+  const rowPosition =
+    ((lat - grid.south) / (grid.north - grid.south)) * (grid.rows - 1);
+  const columnPosition =
+    ((lon - grid.west) / (grid.east - grid.west)) * (grid.columns - 1);
+  const row0 = Math.min(grid.rows - 2, Math.max(0, Math.floor(rowPosition)));
+  const column0 = Math.min(
+    grid.columns - 2,
+    Math.max(0, Math.floor(columnPosition)),
+  );
+  const rowMix = rowPosition - row0;
+  const columnMix = columnPosition - column0;
+  const vector = (row: number, column: number) =>
+    vectors[row * grid.columns + column];
+  const northwest = vector(row0 + 1, column0);
+  const northeast = vector(row0 + 1, column0 + 1);
+  const southwest = vector(row0, column0);
+  const southeast = vector(row0, column0 + 1);
+  if (!northwest || !northeast || !southwest || !southeast) return null;
+
+  const interpolate = (component: 0 | 1) => {
+    const south =
+      southwest[component] * (1 - columnMix) +
+      southeast[component] * columnMix;
+    const north =
+      northwest[component] * (1 - columnMix) +
+      northeast[component] * columnMix;
+    return south * (1 - rowMix) + north * rowMix;
+  };
+  const east = interpolate(0);
+  const north = interpolate(1);
+  return { east, north, speed: Math.hypot(east, north) };
+};
+
 const skySymbol = (hour: ForecastHour) => {
   if (!hour.isDay && hour.weatherCode <= 2) return { symbol: "☾", label: "Noche despejada" };
   if (hour.weatherCode === 0) return { symbol: "☀️", label: "Despejado" };
@@ -275,6 +341,7 @@ export default function Dashboard() {
   const canvasRendererRef = useRef<Leaflet.Renderer | null>(null);
   const forecastRequestRef = useRef<AbortController | null>(null);
   const forecastCacheRef = useRef<Map<string, ForecastCacheEntry>>(new Map());
+  const windFieldRef = useRef<WindField | null>(null);
 
   const [liveStatus, setLiveStatus] = useState<LiveStatus>(fallbackStatus);
   const [liveAirStations, setLiveAirStations] = useState<AirStation[]>([]);
@@ -306,8 +373,8 @@ export default function Dashboard() {
   const [forecast, setForecast] = useState<ForecastHour[]>([]);
   const [forecastState, setForecastState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [forecastWindDirection, setForecastWindDirection] = useState<number | null>(null);
-  const [forecastWindSpeed, setForecastWindSpeed] = useState<number | null>(null);
-  const [ambientWind, setAmbientWind] = useState<{ direction: number; speed: number } | null>(null);
+  const [windField, setWindField] = useState<WindField | null>(null);
+  const [windFieldState, setWindFieldState] = useState<WindFieldState>("idle");
   const [panelOpen, setPanelOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [activeList, setActiveList] = useState<StatusKind>("evacuado");
@@ -373,12 +440,6 @@ export default function Dashboard() {
     currentWindDirection === null
       ? null
       : windMovementDirection(currentWindDirection);
-  const currentWindSpeed =
-    typeof forecastWindSpeed === "number" && Number.isFinite(forecastWindSpeed)
-      ? Math.max(0, forecastWindSpeed)
-      : null;
-  const particleWindDirection = currentWindDirection ?? ambientWind?.direction ?? null;
-  const particleWindSpeed = currentWindSpeed ?? ambientWind?.speed ?? null;
 
   const visiblePoints = useMemo(
     () => displayRegion.points.filter((point) => point.kind === activeList),
@@ -438,7 +499,6 @@ export default function Dashboard() {
     if (!force && cachedForecast && cachedForecast.expiresAt > Date.now()) {
       setForecast(cachedForecast.rows);
       setForecastWindDirection(cachedForecast.windDirection);
-      setForecastWindSpeed(cachedForecast.windSpeed);
       setForecastState("ready");
       return;
     }
@@ -449,7 +509,6 @@ export default function Dashboard() {
     if (!force) {
       setForecast([]);
       setForecastWindDirection(null);
-      setForecastWindSpeed(null);
       setForecastState("loading");
     }
     try {
@@ -486,14 +545,10 @@ export default function Dashboard() {
       const windDirection = Number.isFinite(currentDirection)
         ? currentDirection
         : rows[0]?.windDirection;
-      const currentSpeed = Number(data.current?.wind_speed_10m);
-      const windSpeed = Number.isFinite(currentSpeed) ? currentSpeed : rows[0]?.wind;
       if (
         !rows.length ||
         typeof windDirection !== "number" ||
-        !Number.isFinite(windDirection) ||
-        typeof windSpeed !== "number" ||
-        !Number.isFinite(windSpeed)
+        !Number.isFinite(windDirection)
       ) {
         throw new Error("Forecast returned no current hours or wind");
       }
@@ -505,11 +560,9 @@ export default function Dashboard() {
         expiresAt: Date.now() + REFRESH_INTERVALS.forecast,
         rows,
         windDirection,
-        windSpeed,
       });
       setForecast(rows);
       setForecastWindDirection(windDirection);
-      setForecastWindSpeed(windSpeed);
       setForecastState("ready");
       setWeatherReadAt(new Date().toISOString());
     } catch (error) {
@@ -517,7 +570,6 @@ export default function Dashboard() {
       if (!force) {
         setForecast([]);
         setForecastWindDirection(null);
-        setForecastWindSpeed(null);
         setForecastState("error");
       }
     } finally {
@@ -529,39 +581,75 @@ export default function Dashboard() {
     if (!windParticlesVisible) return;
     let active = true;
     let controller: AbortController | undefined;
-    const refreshAmbientWind = async () => {
+    let refreshTimer = 0;
+
+    const scheduleRefresh = (expiresAt: string) => {
+      window.clearTimeout(refreshTimer);
+      const expiresAtMs = Date.parse(expiresAt);
+      const waitMs = Number.isFinite(expiresAtMs)
+        ? Math.max(60_000, expiresAtMs - Date.now() + 1_000)
+        : 60_000;
+      refreshTimer = window.setTimeout(() => {
+        if (!document.hidden) void refreshWindField();
+      }, waitMs);
+    };
+
+    const refreshWindField = async () => {
       controller?.abort();
       controller = new AbortController();
-      const params = new URLSearchParams({
-        latitude: "40.4168",
-        longitude: "-3.7038",
-        current: "wind_direction_10m,wind_speed_10m",
-        timezone: "auto",
-      });
+      setWindFieldState(windFieldRef.current ? "refreshing" : "loading");
       try {
-        const response = await fetch(
-          "https://api.open-meteo.com/v1/forecast?" + params.toString(),
-          { cache: "no-store", signal: controller.signal },
-        );
-        if (!response.ok) return;
-        const data = await response.json();
-        const direction = Number(data.current?.wind_direction_10m);
-        const speed = Number(data.current?.wind_speed_10m);
-        if (active && Number.isFinite(direction) && Number.isFinite(speed)) {
-          setAmbientWind({ direction, speed });
+        const response = await fetch("/api/wind-field", {
+          cache: "default",
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Campo de viento no disponible");
+        const data = (await response.json()) as WindField;
+        if (
+          data.schemaVersion !== 1 ||
+          !Array.isArray(data.vectors) ||
+          data.vectors.length !== data.grid.rows * data.grid.columns
+        ) {
+          throw new Error("Campo de viento inválido");
         }
+        if (!active) return;
+        windFieldRef.current = data;
+        setWindField(data);
+        setWindFieldState(data.stale ? "stale" : "ready");
+        scheduleRefresh(
+          data.stale
+            ? new Date(Date.now() + 5 * 60_000).toISOString()
+            : data.expiresAt,
+        );
       } catch (error) {
-        if ((error as Error).name !== "AbortError") return;
+        if ((error as Error).name === "AbortError" || !active) return;
+        setWindFieldState(windFieldRef.current ? "stale" : "error");
+        scheduleRefresh(new Date(Date.now() + 5 * 60_000).toISOString());
       }
     };
-    void refreshAmbientWind();
-    const interval = window.setInterval(() => {
-      if (!document.hidden) void refreshAmbientWind();
-    }, 30 * 60 * 1000);
+
+    const cached = windFieldRef.current;
+    if (cached && Date.parse(cached.expiresAt) > Date.now()) {
+      setWindFieldState(cached.stale ? "stale" : "ready");
+      scheduleRefresh(cached.expiresAt);
+    } else {
+      void refreshWindField();
+    }
+    const visibilityChanged = () => {
+      const current = windFieldRef.current;
+      if (
+        !document.hidden &&
+        (!current || Date.parse(current.expiresAt) <= Date.now())
+      ) {
+        void refreshWindField();
+      }
+    };
+    document.addEventListener("visibilitychange", visibilityChanged);
     return () => {
       active = false;
       controller?.abort();
-      window.clearInterval(interval);
+      window.clearTimeout(refreshTimer);
+      document.removeEventListener("visibilitychange", visibilityChanged);
     };
   }, [windParticlesVisible]);
 
@@ -878,13 +966,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     const canvas = windCanvasRef.current;
-    if (
-      !canvas ||
-      !mapReady ||
-      !windParticlesVisible ||
-      particleWindDirection === null ||
-      particleWindSpeed === null
-    ) {
+    const map = mapRef.current;
+    if (!canvas || !map || !mapReady || !windParticlesVisible || !windField) {
       return;
     }
     const context = canvas.getContext("2d");
@@ -900,6 +983,8 @@ export default function Dashboard() {
       y: number;
       opacity: number;
       scale: number;
+      age: number;
+      lifetime: number;
     };
     let width = 0;
     let height = 0;
@@ -908,20 +993,19 @@ export default function Dashboard() {
     let timer = 0;
     let previousFrame = performance.now();
     let hidden = document.hidden;
-    const bearing =
-      (windMovementDirection(particleWindDirection) * Math.PI) / 180;
-    const directionX = Math.sin(bearing);
-    const directionY = -Math.cos(bearing);
-    const velocity = Math.min(78, 22 + particleWindSpeed * 1.15);
-    const trail = Math.min(42, 20 + particleWindSpeed * 0.55);
     const frameInterval = 1000 / 15;
 
-    const makeParticle = (): WindParticle => ({
-      x: Math.random() * Math.max(width, 1),
-      y: Math.random() * Math.max(height, 1),
-      opacity: 0.48 + Math.random() * 0.28,
-      scale: 0.75 + Math.random() * 0.65,
-    });
+    const makeParticle = (staggered = false): WindParticle => {
+      const lifetime = 1.8 + Math.random() * 2.4;
+      return {
+        x: Math.random() * Math.max(width, 1),
+        y: Math.random() * Math.max(height, 1),
+        opacity: 0.48 + Math.random() * 0.28,
+        scale: 0.75 + Math.random() * 0.65,
+        age: staggered ? Math.random() * lifetime : 0,
+        lifetime,
+      };
+    };
 
     const resize = () => {
       const bounds = canvas.getBoundingClientRect();
@@ -932,7 +1016,7 @@ export default function Dashboard() {
       canvas.height = Math.round(height * pixelRatio);
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
       const count = width < 700 ? 18 : 34;
-      particles = Array.from({ length: count }, makeParticle);
+      particles = Array.from({ length: count }, () => makeParticle(true));
     };
 
     const draw = (timestamp: number) => {
@@ -944,13 +1028,38 @@ export default function Dashboard() {
       context.clearRect(0, 0, width, height);
       context.lineCap = "round";
       particles.forEach((particle) => {
+        particle.age += elapsed;
+        if (particle.age >= particle.lifetime) {
+          Object.assign(particle, makeParticle());
+        }
+
+        const latLng = map.containerPointToLatLng([particle.x, particle.y]);
+        const wind = sampleWindField(windField, latLng.lat, latLng.lng);
+        if (!wind || wind.speed < 0.2) return;
+
+        const directionX = wind.east / wind.speed;
+        const directionY = -wind.north / wind.speed;
+        const velocity = Math.min(84, 10 + wind.speed * 1.6);
+        const trail = Math.min(38, 10 + wind.speed * 0.65);
         particle.x += directionX * velocity * particle.scale * elapsed;
         particle.y += directionY * velocity * particle.scale * elapsed;
         const margin = trail + 3;
-        if (particle.x < -margin) particle.x = width + margin;
-        if (particle.x > width + margin) particle.x = -margin;
-        if (particle.y < -margin) particle.y = height + margin;
-        if (particle.y > height + margin) particle.y = -margin;
+        if (
+          particle.x < -margin ||
+          particle.x > width + margin ||
+          particle.y < -margin ||
+          particle.y > height + margin
+        ) {
+          Object.assign(particle, makeParticle());
+          return;
+        }
+
+        const phase = particle.age / particle.lifetime;
+        const fade = Math.max(
+          0,
+          Math.min(1, phase / 0.16, (1 - phase) / 0.24),
+        );
+        const opacity = particle.opacity * fade;
         context.beginPath();
         context.moveTo(
           particle.x - directionX * trail * particle.scale,
@@ -958,7 +1067,7 @@ export default function Dashboard() {
         );
         context.lineTo(particle.x, particle.y);
         context.lineWidth = 3.2 + particle.scale * 0.9;
-        context.strokeStyle = "rgba(255, 255, 255, " + particle.opacity * 0.82 + ")";
+        context.strokeStyle = "rgba(255, 255, 255, " + opacity * 0.82 + ")";
         context.stroke();
         context.beginPath();
         context.moveTo(
@@ -967,7 +1076,7 @@ export default function Dashboard() {
         );
         context.lineTo(particle.x, particle.y);
         context.lineWidth = 1.25 + particle.scale * 0.55;
-        context.strokeStyle = "rgba(0, 105, 190, " + particle.opacity + ")";
+        context.strokeStyle = "rgba(0, 105, 190, " + opacity + ")";
         context.stroke();
       });
       timer = window.setTimeout(() => {
@@ -996,7 +1105,7 @@ export default function Dashboard() {
       document.removeEventListener("visibilitychange", visibilityChanged);
       context.clearRect(0, 0, width, height);
     };
-  }, [mapReady, particleWindDirection, particleWindSpeed, windParticlesVisible]);
+  }, [mapReady, windField, windParticlesVisible]);
 
   useEffect(() => {
     let active = true;
@@ -1614,10 +1723,17 @@ export default function Dashboard() {
       icon: "MET",
       className: "source-icon--weather",
       title: "Open-Meteo",
-      detail: "Previsión del último punto pulsado",
+      detail: windField
+        ? `Previsión puntual · viento espacial ${windField.grid.columns}×${windField.grid.rows}, válido ${formatSnapshotTime(windField.validAt)} y descargado bajo demanda${windField.stale ? " · última malla válida" : ""}`
+        : "Previsión puntual · el viento espacial se descarga solo al activarlo",
       url: "https://open-meteo.com/",
-      read: weatherReadAt,
-      ok: weatherReadAt ? true : undefined,
+      read: windField?.fetchedAt || weatherReadAt,
+      ok:
+        windFieldState === "error"
+          ? false
+          : windField || weatherReadAt
+            ? true
+            : undefined,
     },
     {
       id: "osm",
@@ -1960,9 +2076,20 @@ export default function Dashboard() {
               <button
                 aria-pressed={windParticlesVisible}
                 onClick={() => setWindParticlesVisible(!windParticlesVisible)}
-                title="Las partículas y flechas muestran hacia dónde se desplaza el aire; se reducen en móvil y se desactivan con movimiento reducido"
+                title="Campo espacial de viento descargado bajo demanda y cacheado una hora; las partículas muestran hacia dónde se desplaza el aire"
               >
-                <i className="legend-wind">→</i><span>Viento suave</span><em>{windParticlesVisible ? "ON" : "OFF"}</em>
+                <i className="legend-wind">→</i><span>Viento suave</span>
+                <em aria-live="polite">
+                  {!windParticlesVisible
+                    ? "OFF"
+                    : windFieldState === "idle" || windFieldState === "loading" || windFieldState === "refreshing"
+                      ? "CARGA"
+                      : windFieldState === "stale"
+                        ? "ANT."
+                        : windFieldState === "error"
+                          ? "ERROR"
+                          : "ON"}
+                </em>
               </button>
               <button aria-pressed={smokeVisible} onClick={() => setSmokeVisible(!smokeVisible)}>
                 <i className="legend-smoke"></i><span>Humo VIIRS</span><em>{smokeVisible ? "ON" : "OFF"}</em>

@@ -43,9 +43,12 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
   desplaza el aire. Open-Meteo expresa de dónde viene: FOCO suma 180° para la
   representación con punta y muestra el texto accesible «desde… hacia…».
 - Visualización ambiental opcional de viento, apagada por defecto. Mientras está
-  apagada no consulta Open-Meteo ni anima. Al activarla muestra trazos azules con
-  halo blanco: 18 partículas en móvil o 34 en escritorio, limitadas a 15 FPS,
-  pausadas con la pestaña oculta y desactivadas para `prefers-reduced-motion`.
+  apagada no consulta Open-Meteo ni anima. Al activarla solicita al servidor una
+  malla 9×7 de la zona Centro: se descarga bajo demanda, se comparte entre todos
+  los usuarios y se conserva una hora en caché persistente, sin precalentado. El
+  navegador interpola el vector en cada posición y muestra trazos de vida corta
+  que aparecen y desaparecen: 18 en móvil o 34 en escritorio, limitados a 15 FPS,
+  pausados con la pestaña oculta y desactivados para `prefers-reduced-motion`.
 - Navegación entre snapshots horarios y vivo. La consulta periódica descarga
   solo el índice ligero; cada snapshot completo se obtiene y cachea únicamente
   al seleccionarlo.
@@ -105,8 +108,11 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
   carga la autoridad intermedia pública de FNMT desde `ops/fnmt-components.pem`; la
   validación TLS nunca se desactiva.
 - Open-Meteo: previsión puntual solicitada por el navegador; se renueva cada
-  quince minutos mientras el panel del punto permanece abierto. El viento
-  ambiental de Madrid se renueva cada treinta minutos para las partículas.
+  quince minutos mientras el panel del punto permanece abierto. El campo de
+  viento espacial se obtiene a través de `/api/wind-field` únicamente al activar
+  la capa. La primera petición tras vencer la hora espera una malla nueva; un
+  fallo conserva y marca la última malla válida. Si nadie activa la capa, no se
+  realizan consultas remotas de viento.
 - El navegador renueva estado cada dos minutos y región, noticias, manifiesto
   satelital e índice de snapshots cada cinco minutos; también refresca al volver
   a primer plano o recuperar conexión. Región usa caché persistente de cinco
