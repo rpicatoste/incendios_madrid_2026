@@ -26,13 +26,21 @@ type StoredSnapshot = {
 const dataDirectory =
   process.env.FOCO_DATA_DIR || join(process.cwd(), ".foco-data");
 const snapshotFile = join(dataDirectory, "snapshots.json");
+const SNAPSHOT_ID_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}$/;
+let snapshotMemoryCache: StoredSnapshot[] | undefined;
 let writeQueue: Promise<unknown> = Promise.resolve();
 
 const readSnapshots = async (): Promise<StoredSnapshot[]> => {
+  if (snapshotMemoryCache) return snapshotMemoryCache;
   try {
-    return JSON.parse(await readFile(snapshotFile, "utf8")) as StoredSnapshot[];
+    const parsed = JSON.parse(await readFile(snapshotFile, "utf8")) as StoredSnapshot[];
+    snapshotMemoryCache = Array.isArray(parsed) ? parsed : [];
+    return snapshotMemoryCache;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      snapshotMemoryCache = [];
+      return snapshotMemoryCache;
+    }
     throw error;
   }
 };
@@ -42,6 +50,7 @@ const saveSnapshots = async (snapshots: StoredSnapshot[]) => {
   const temporaryFile = `${snapshotFile}.tmp`;
   await writeFile(temporaryFile, JSON.stringify(snapshots), "utf8");
   await rename(temporaryFile, snapshotFile);
+  snapshotMemoryCache = snapshots;
 };
 
 const withWriteLock = async <T,>(operation: () => Promise<T>) => {
@@ -50,12 +59,28 @@ const withWriteLock = async <T,>(operation: () => Promise<T>) => {
   return result;
 };
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const snapshots = (await readSnapshots()).slice(-336);
+    const requestedId = new URL(request.url).searchParams.get("id");
+    if (requestedId !== null) {
+      if (!SNAPSHOT_ID_PATTERN.test(requestedId)) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
+      const snapshot = snapshots.find((item) => item.id === requestedId);
+      if (!snapshot) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
+      return Response.json(
+        { snapshot },
+        { headers: { "Cache-Control": "public, max-age=31536000, immutable" } },
+      );
+    }
     return Response.json(
-      { snapshots },
-      { headers: { "Cache-Control": "no-store" } },
+      {
+        snapshots: snapshots.map(({ id, capturedAt }) => ({ id, capturedAt })),
+      },
+      { headers: { "Cache-Control": "public, max-age=60, stale-while-revalidate=300" } },
     );
   } catch (error) {
     return Response.json(
@@ -122,7 +147,11 @@ export async function POST(request: Request) {
       const payload = await captureFromServer(request, capturedAt);
       const snapshots = await readSnapshots();
       const existingSnapshot = snapshots.find((item) => item.id === hourId);
-      if (existingSnapshot?.data.satellite?.schemaVersion === 4) {
+      if (
+        existingSnapshot?.data.satellite?.schemaVersion === 4 &&
+        existingSnapshot.data.satellite.copernicus?.geometryVersion ===
+          payload.satellite?.copernicus?.geometryVersion
+      ) {
         return {
           action: "reused",
           snapshot: existingSnapshot,

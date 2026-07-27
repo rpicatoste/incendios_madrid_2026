@@ -27,6 +27,7 @@ type CopernicusMap = {
     frontProduct?: string;
     frontObservedAt?: string;
     readAt?: string;
+    geometryVersion?: string;
   };
 };
 
@@ -60,6 +61,7 @@ export type SatelliteSnapshot = {
     frontProduct?: string;
     frontObservedAt?: string;
     readAt?: string;
+    geometryVersion?: string;
   };
 };
 
@@ -81,9 +83,13 @@ const LOOKBACK_DAYS: Record<RasterLayer, number> = {
   heat: 2,
   smoke: 2,
 };
-// El ráster legado es solo un respaldo del vector estructurado EFFIS, cuyo
-// producto es diario. Evitamos castigar el WMS inestable con consultas horarias.
-const BURNT_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
+// Cada captura reutiliza en disco las capas cuya fuente cambia
+// mucho más despacio. Así el servidor y los clientes no descargan el mismo PNG.
+const RASTER_REFRESH_INTERVAL_MS: Record<RasterLayer, number> = {
+  burnt: 6 * 60 * 60 * 1000,
+  heat: 30 * 60 * 1000,
+  smoke: 6 * 60 * 60 * 1000,
+};
 
 const isRasterLayer = (layer: SatelliteLayer): layer is RasterLayer =>
   layer === "burnt" || layer === "heat" || layer === "smoke";
@@ -319,20 +325,26 @@ export const captureSatelliteSnapshot = async (
   } catch {
     previous = undefined;
   }
-  const previousBurntCheck =
-    previous?.layerCheckedAt?.burnt || previous?.layerCapturedAt?.burnt;
-  const burntAge = previousBurntCheck
-    ? Date.parse(capturedAt) - Date.parse(previousBurntCheck)
-    : Infinity;
-  const canReuseBurnt =
-    Boolean(previous?.layers.burnt) && burntAge >= 0 && burntAge < BURNT_REFRESH_INTERVAL_MS;
+  const rasterLayers: RasterLayer[] = ["burnt", "heat", "smoke"];
+  const canReuseRaster = (layer: RasterLayer) => {
+    const previousCheck =
+      previous?.layerCheckedAt?.[layer] || previous?.layerCapturedAt?.[layer];
+    const age = previousCheck
+      ? Date.parse(capturedAt) - Date.parse(previousCheck)
+      : Infinity;
+    return (
+      Boolean(previous?.layers[layer]) &&
+      age >= 0 &&
+      age < RASTER_REFRESH_INTERVAL_MS[layer]
+    );
+  };
   const effisBundlePromise = getEffisAreaBundle(new Date(capturedAt));
   const results = await Promise.allSettled([
-    canReuseBurnt
-      ? reusePng(storageId, "burnt", previous!)
-      : capturePng(storageId, "burnt", date),
-    capturePng(storageId, "heat", date),
-    capturePng(storageId, "smoke", date),
+    ...rasterLayers.map((layer) =>
+      canReuseRaster(layer)
+        ? reusePng(storageId, layer, previous!)
+        : capturePng(storageId, layer, date),
+    ),
     atomicWrite(layerPath(storageId, "copernicus"), JSON.stringify(copernicusMap)),
     effisBundlePromise.then(async (bundle) => {
       await atomicWrite(layerPath(storageId, "effis"), JSON.stringify(bundle.map));
@@ -429,6 +441,7 @@ export const captureSatelliteSnapshot = async (
           frontProduct: copernicusMap.source.frontProduct,
           frontObservedAt: copernicusMap.source.frontObservedAt,
           readAt: copernicusMap.source.readAt,
+          geometryVersion: copernicusMap.source.geometryVersion,
         }
       : undefined,
   };

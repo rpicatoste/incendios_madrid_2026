@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   defaultRegionData,
@@ -7,6 +7,7 @@ import {
   type StatusKind,
 } from "./region-data";
 import {
+  getMadridStatus,
   MADRID_STATUS_SOURCE,
   type MadridStatus,
 } from "./madrid-status";
@@ -17,6 +18,9 @@ type GeocodeCache = Record<string, Coordinates>;
 const dataDirectory =
   process.env.FOCO_DATA_DIR || join(process.cwd(), ".foco-data");
 const geocodeFile = join(dataDirectory, "geocodes.json");
+const liveRegionCacheFile = join(dataDirectory, "cache", "live-region.json");
+const LIVE_REGION_CACHE_SCHEMA_VERSION = 1;
+const LIVE_REGION_CACHE_TTL_MS = 5 * 60 * 1000;
 
 const normalizeName = (value: string) =>
   value
@@ -187,4 +191,86 @@ export const buildLiveRegion = async (status: MadridStatus): Promise<RegionData>
     fires: defaultRegionData.fires,
     ...(unmappedLocations.length ? { unmappedLocations } : {}),
   };
+};
+
+
+type LiveRegionPayload = RegionData & { fetchedAt: string };
+type LiveRegionCacheEntry = {
+  schemaVersion: number;
+  expiresAt: number;
+  payload: LiveRegionPayload;
+};
+
+let liveRegionMemoryCache: LiveRegionCacheEntry | undefined;
+let liveRegionDiskCachePromise: Promise<LiveRegionCacheEntry | undefined> | undefined;
+let liveRegionRefreshPromise: Promise<LiveRegionPayload> | undefined;
+
+const readLiveRegionCache = async () => {
+  try {
+    const parsed = JSON.parse(
+      await readFile(liveRegionCacheFile, "utf8"),
+    ) as Partial<LiveRegionCacheEntry>;
+    if (
+      parsed.schemaVersion !== LIVE_REGION_CACHE_SCHEMA_VERSION ||
+      typeof parsed.expiresAt !== "number" ||
+      !parsed.payload ||
+      !Array.isArray(parsed.payload.points) ||
+      !Array.isArray(parsed.payload.fires)
+    ) {
+      return undefined;
+    }
+    return parsed as LiveRegionCacheEntry;
+  } catch {
+    return undefined;
+  }
+};
+
+const getLiveRegionCache = async () => {
+  if (liveRegionMemoryCache) return liveRegionMemoryCache;
+  liveRegionDiskCachePromise ||= readLiveRegionCache();
+  liveRegionMemoryCache = await liveRegionDiskCachePromise;
+  return liveRegionMemoryCache;
+};
+
+const writeLiveRegionCache = async (cache: LiveRegionCacheEntry) => {
+  const temporaryFile = `${liveRegionCacheFile}.${process.pid}.${Date.now()}.tmp`;
+  await mkdir(dirname(liveRegionCacheFile), { recursive: true });
+  try {
+    await writeFile(temporaryFile, JSON.stringify(cache), { mode: 0o600 });
+    await rename(temporaryFile, liveRegionCacheFile);
+    liveRegionMemoryCache = cache;
+  } finally {
+    await unlink(temporaryFile).catch(() => {});
+  }
+};
+
+const refreshLiveRegion = () => {
+  liveRegionRefreshPromise ||= (async () => {
+    const status = await getMadridStatus();
+    const payload: LiveRegionPayload = {
+      ...(await buildLiveRegion(status)),
+      fetchedAt: new Date().toISOString(),
+    };
+    const cache: LiveRegionCacheEntry = {
+      schemaVersion: LIVE_REGION_CACHE_SCHEMA_VERSION,
+      expiresAt: Date.now() + LIVE_REGION_CACHE_TTL_MS,
+      payload,
+    };
+    await writeLiveRegionCache(cache);
+    return payload;
+  })().finally(() => {
+    liveRegionRefreshPromise = undefined;
+  });
+  return liveRegionRefreshPromise;
+};
+
+export const getLiveRegion = async () => {
+  const cached = await getLiveRegionCache();
+  if (cached?.expiresAt && cached.expiresAt > Date.now()) return cached.payload;
+  const refresh = refreshLiveRegion();
+  if (cached) {
+    void refresh.catch(() => {});
+    return cached.payload;
+  }
+  return refresh;
 };

@@ -46,14 +46,20 @@ y volver a iniciar `foco-app.service`.
 - Los pines de situación no solicitan previsión; las grandes áreas aproximadas
   de incendio y los clics libres en el mapa sí pueden hacerlo.
 - El indicador de previsión puntual es una flecha azul orientada con el viento.
-- Las partículas de viento deben seguir siendo escasas, limitadas a 20 FPS,
-  pausarse con la pestaña oculta y respetar `prefers-reduced-motion`.
+- La capa de viento empieza desactivada: mientras siga apagada no solicita el
+  viento ambiental ni ejecuta animación. Al activarla usa 18 partículas en móvil
+  o 34 en escritorio, limitadas a 15 FPS, se pausa con la pestaña oculta y
+  respeta `prefers-reduced-motion`.
 - Fuera de Madrid no inferir evacuaciones o confinamientos desde perímetros,
   niveles o proximidad: exigir una relación oficial nominal o estructurada.
 - Los snapshots históricos deben ser inmutables y no consultar fuentes remotas.
 - Una captura remota inválida o transparente no sustituye una copia válida.
 - Una capa conservada debe marcarse como desactualizada y exponer la fecha real
   de su fuente.
+- Conservar en disco privado los GeoJSON originales de Copernicus; servir al
+  navegador únicamente la geometría drásticamente simplificada y versionada.
+- La lista de snapshots solo entrega identificador y hora; cargar el contenido
+  completo de un snapshot histórico únicamente cuando el usuario lo selecciona.
 - La analítica privada no guarda IP, agente ni rutas en claro, respeta DNT/GPC y
   nunca enlaza públicamente `/visitas`.
 - Las mutaciones públicas permanecen denegadas salvo la señal anónima y vacía de
@@ -63,14 +69,21 @@ y volver a iniciar `foco-app.service`.
 
 - Estado de Madrid: 2 minutos.
 - Región, noticias, manifiesto satelital y snapshots: 5 minutos.
-- Calidad del aire MITECO: 15 minutos, con últimas lecturas válidas limitadas.
+- Calidad del aire MITECO: 15 minutos. Conservar sin caducidad destructiva la
+  última lectura válida por estación y marcarla como recuperada si MITECO omite
+  el índice; servir caché vencida inmediatamente mientras se refresca en segundo
+  plano.
 - Previsión Open-Meteo: 15 minutos mientras el panel está abierto; viento
   ambiental para partículas: 30 minutos.
 - Capturas: comprobación cada 5 minutos y snapshot inmutable al inicio de hora.
+  Los PNG se reutilizan en el servidor: calor 30 minutos, humo 6 horas y ráster
+  EFFIS legado 6 horas. Las URLs cliente versionadas son inmutables.
 - EFFIS: producto diario, sin hora fija; consultar el vector estructurado como
   máximo una vez por hora y el ráster legado de respaldo cada seis horas.
 - Copernicus EMSR900 y EMSR898: todas las AOI con producto entregado; metadatos
-  cacheados quince minutos. NASA GIBS y Copernicus pueden publicar con
+  cacheados quince minutos, originales inmutables guardados en disco privado y
+  geometría cliente recalculada solo si cambia su versión. NASA GIBS y
+  Copernicus pueden publicar con
   cadencias distintas a las consultas de FOCO; siempre distinguir hora de
   lectura, fecha del producto y antigüedad real.
 

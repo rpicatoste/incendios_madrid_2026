@@ -104,13 +104,17 @@ type SnapshotData = {
       frontProduct?: string;
       frontObservedAt?: string;
       readAt?: string;
+      geometryVersion?: string;
     };
   };
 };
 
-type SnapshotRecord = {
+type SnapshotSummary = {
   id: string;
   capturedAt: string;
+};
+
+type SnapshotRecord = SnapshotSummary & {
   data: SnapshotData;
 };
 
@@ -273,8 +277,9 @@ export default function Dashboard() {
   const [liveSatellite, setLiveSatellite] = useState<SnapshotData["satellite"]>(undefined);
   const [cachedFireMap, setCachedFireMap] = useState<CopernicusFireMap | null>(null);
   const [cachedEffisMap, setCachedEffisMap] = useState<EffisAreaMap | null>(null);
-  const [snapshots, setSnapshots] = useState<SnapshotRecord[]>([]);
+  const [snapshots, setSnapshots] = useState<SnapshotSummary[]>([]);
   const [snapshotIndex, setSnapshotIndex] = useState<number | null>(null);
+  const [loadedSnapshot, setLoadedSnapshot] = useState<SnapshotRecord | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState("");
   const [locationState, setLocationState] = useState("Buscando tu posición…");
@@ -288,7 +293,7 @@ export default function Dashboard() {
   const [heatVisible, setHeatVisible] = useState(true);
   const [burntVisible, setBurntVisible] = useState(true);
   const [frontVisible, setFrontVisible] = useState(true);
-  const [windParticlesVisible, setWindParticlesVisible] = useState(true);
+  const [windParticlesVisible, setWindParticlesVisible] = useState(false);
   const [smokeVisible, setSmokeVisible] = useState(false);
   const [fireAreasVisible, setFireAreasVisible] = useState(true);
   const [userVisible, setUserVisible] = useState(true);
@@ -311,7 +316,15 @@ export default function Dashboard() {
   const [weatherReadAt, setWeatherReadAt] = useState("");
   const [baseMapReadAt, setBaseMapReadAt] = useState("");
 
-  const selectedSnapshot = snapshotIndex === null ? null : snapshots[snapshotIndex] || null;
+  const selectedSnapshotSummary =
+    snapshotIndex === null ? null : snapshots[snapshotIndex] || null;
+  const selectedSnapshotId = selectedSnapshotSummary?.id || null;
+  const selectedSnapshotVersion = selectedSnapshotSummary?.capturedAt || "";
+  const selectedSnapshot =
+    selectedSnapshotId && loadedSnapshot?.id === selectedSnapshotId
+      ? loadedSnapshot
+      : null;
+  const isLive = snapshotIndex === null;
   const displayStatus = selectedSnapshot?.data.status || liveStatus;
   const displayAirStations = selectedSnapshot?.data.airStations || liveAirStations;
   const currentAirStationCount = displayAirStations.filter(
@@ -323,13 +336,29 @@ export default function Dashboard() {
   const displayRegion = selectedSnapshot?.data.region || liveRegion;
   const displayFireMap = cachedFireMap;
   const layerTime = selectedSnapshot?.data.layerTime || new Date().toISOString();
-  const isLive = selectedSnapshot === null;
   const displaySatellite = selectedSnapshot?.data.satellite || (isLive ? liveSatellite : undefined);
   const satelliteStorageId = selectedSnapshot?.data.satellite
     ? selectedSnapshot.id
     : isLive && liveSatellite
       ? "live"
       : null;
+  const copernicusLayerAvailable = Boolean(displaySatellite?.layers.copernicus);
+  const copernicusVersion =
+    displaySatellite?.copernicus?.geometryVersion ||
+    [
+      displaySatellite?.copernicus?.areaProduct,
+      displaySatellite?.copernicus?.areaObservedAt,
+      displaySatellite?.copernicus?.frontProduct,
+      displaySatellite?.copernicus?.frontObservedAt,
+    ]
+      .filter(Boolean)
+      .join(":");
+  const effisLayerAvailable = Boolean(displaySatellite?.layers.effis);
+  const effisVersion =
+    displaySatellite?.effis?.latestUpdateInView ||
+    displaySatellite?.effis?.readAt ||
+    displaySatellite?.layerCapturedAt?.effis ||
+    "";
   const rawWindDirection = forecastWindDirection;
   const currentWindDirection =
     typeof rawWindDirection === "number" && Number.isFinite(rawWindDirection)
@@ -488,6 +517,7 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
+    if (!windParticlesVisible) return;
     let active = true;
     let controller: AbortController | undefined;
     const refreshAmbientWind = async () => {
@@ -524,7 +554,7 @@ export default function Dashboard() {
       controller?.abort();
       window.clearInterval(interval);
     };
-  }, []);
+  }, [windParticlesVisible]);
 
   useEffect(() => {
     if (!panelOpen || !selectedPoint) return;
@@ -571,7 +601,7 @@ export default function Dashboard() {
       const controller = new AbortController();
       const timeout = window.setTimeout(() => controller.abort(), 20000);
       try {
-        const response = await fetch(path, { cache: "no-store", signal: controller.signal });
+        const response = await fetch(path, { cache: "default", signal: controller.signal });
         if (!response.ok) throw new Error("No se pudo actualizar una fuente interna");
         return response.json();
       } finally {
@@ -615,7 +645,7 @@ export default function Dashboard() {
       if (!active) return;
       if (manifestResult.status === "fulfilled") setLiveSatellite(manifestResult.value);
       if (snapshotsResult.status === "fulfilled") {
-        setSnapshots((snapshotsResult.value as { snapshots?: SnapshotRecord[] }).snapshots || []);
+        setSnapshots((snapshotsResult.value as { snapshots?: SnapshotSummary[] }).snapshots || []);
       }
     };
 
@@ -670,6 +700,28 @@ export default function Dashboard() {
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, []);
+
+  useEffect(() => {
+    if (!selectedSnapshotId) return;
+    const controller = new AbortController();
+    fetch(
+      `/api/snapshots?id=${encodeURIComponent(selectedSnapshotId)}&v=${encodeURIComponent(selectedSnapshotVersion)}`,
+      { cache: "force-cache", signal: controller.signal },
+    )
+      .then((response) => {
+        if (!response.ok) throw new Error("Snapshot no disponible");
+        return response.json() as Promise<{ snapshot?: SnapshotRecord }>;
+      })
+      .then((payload) => {
+        if (payload.snapshot?.id === selectedSnapshotId) {
+          setLoadedSnapshot(payload.snapshot);
+        }
+      })
+      .catch((error) => {
+        if ((error as Error).name !== "AbortError") setLoadedSnapshot(null);
+      });
+    return () => controller.abort();
+  }, [selectedSnapshotId, selectedSnapshotVersion]);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -844,36 +896,37 @@ export default function Dashboard() {
     let height = 0;
     let particles: WindParticle[] = [];
     let frame = 0;
-    let previousFrame = 0;
+    let timer = 0;
+    let previousFrame = performance.now();
     let hidden = document.hidden;
     const bearing = ((particleWindDirection + 180) * Math.PI) / 180;
     const directionX = Math.sin(bearing);
     const directionY = -Math.cos(bearing);
-    const velocity = Math.min(42, 9 + particleWindSpeed * 0.72);
-    const trail = Math.min(18, 6 + particleWindSpeed * 0.26);
+    const velocity = Math.min(78, 22 + particleWindSpeed * 1.15);
+    const trail = Math.min(42, 20 + particleWindSpeed * 0.55);
+    const frameInterval = 1000 / 15;
 
     const makeParticle = (): WindParticle => ({
       x: Math.random() * Math.max(width, 1),
       y: Math.random() * Math.max(height, 1),
-      opacity: 0.08 + Math.random() * 0.13,
-      scale: 0.65 + Math.random() * 0.7,
+      opacity: 0.48 + Math.random() * 0.28,
+      scale: 0.75 + Math.random() * 0.65,
     });
 
     const resize = () => {
       const bounds = canvas.getBoundingClientRect();
       width = Math.max(1, Math.round(bounds.width));
       height = Math.max(1, Math.round(bounds.height));
-      const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.25);
       canvas.width = Math.round(width * pixelRatio);
       canvas.height = Math.round(height * pixelRatio);
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-      const count = width < 700 ? 12 : 24;
+      const count = width < 700 ? 18 : 34;
       particles = Array.from({ length: count }, makeParticle);
     };
 
     const draw = (timestamp: number) => {
-      frame = window.requestAnimationFrame(draw);
-      if (hidden || timestamp - previousFrame < 50) return;
+      if (hidden) return;
       const elapsed = previousFrame
         ? Math.min((timestamp - previousFrame) / 1000, 0.1)
         : 0;
@@ -894,15 +947,32 @@ export default function Dashboard() {
           particle.y - directionY * trail * particle.scale,
         );
         context.lineTo(particle.x, particle.y);
-        context.lineWidth = 0.8 + particle.scale * 0.45;
-        context.strokeStyle = `rgba(24, 111, 153, ${particle.opacity})`;
+        context.lineWidth = 3.2 + particle.scale * 0.9;
+        context.strokeStyle = "rgba(255, 255, 255, " + particle.opacity * 0.82 + ")";
+        context.stroke();
+        context.beginPath();
+        context.moveTo(
+          particle.x - directionX * trail * particle.scale,
+          particle.y - directionY * trail * particle.scale,
+        );
+        context.lineTo(particle.x, particle.y);
+        context.lineWidth = 1.25 + particle.scale * 0.55;
+        context.strokeStyle = "rgba(0, 105, 190, " + particle.opacity + ")";
         context.stroke();
       });
+      timer = window.setTimeout(() => {
+        frame = window.requestAnimationFrame(draw);
+      }, frameInterval);
     };
 
     const visibilityChanged = () => {
       hidden = document.hidden;
-      previousFrame = 0;
+      window.clearTimeout(timer);
+      window.cancelAnimationFrame(frame);
+      if (!hidden) {
+        previousFrame = performance.now();
+        frame = window.requestAnimationFrame(draw);
+      }
     };
     resize();
     const observer = new ResizeObserver(resize);
@@ -910,6 +980,7 @@ export default function Dashboard() {
     document.addEventListener("visibilitychange", visibilityChanged);
     frame = window.requestAnimationFrame(draw);
     return () => {
+      window.clearTimeout(timer);
       window.cancelAnimationFrame(frame);
       observer.disconnect();
       document.removeEventListener("visibilitychange", visibilityChanged);
@@ -919,7 +990,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     let active = true;
-    if (!displaySatellite?.layers.copernicus || !satelliteStorageId) {
+    if (!copernicusLayerAvailable || !satelliteStorageId) {
       const clearCachedMap = window.setTimeout(() => {
         if (active) setCachedFireMap(null);
       }, 0);
@@ -929,8 +1000,8 @@ export default function Dashboard() {
       };
     }
     fetch(
-      `/api/satellite?hour=${encodeURIComponent(satelliteStorageId)}&layer=copernicus&v=${encodeURIComponent(displaySatellite.capturedAt)}`,
-      { cache: satelliteStorageId === "live" ? "no-store" : "force-cache" },
+      `/api/satellite?hour=${encodeURIComponent(satelliteStorageId)}&layer=copernicus&v=${encodeURIComponent(copernicusVersion)}`,
+      { cache: "force-cache" },
     )
       .then((response) => {
         if (!response.ok) throw new Error("Copernicus histórico no disponible");
@@ -945,11 +1016,11 @@ export default function Dashboard() {
     return () => {
       active = false;
     };
-  }, [displaySatellite, satelliteStorageId]);
+  }, [copernicusLayerAvailable, copernicusVersion, satelliteStorageId]);
 
   useEffect(() => {
     let active = true;
-    if (!displaySatellite?.layers.effis || !satelliteStorageId) {
+    if (!effisLayerAvailable || !satelliteStorageId) {
       const clearEffisMap = window.setTimeout(() => {
         if (active) setCachedEffisMap(null);
       }, 0);
@@ -959,8 +1030,8 @@ export default function Dashboard() {
       };
     }
     fetch(
-      `/api/satellite?hour=${encodeURIComponent(satelliteStorageId)}&layer=effis&v=${encodeURIComponent(displaySatellite.capturedAt)}`,
-      { cache: satelliteStorageId === "live" ? "no-store" : "force-cache" },
+      `/api/satellite?hour=${encodeURIComponent(satelliteStorageId)}&layer=effis&v=${encodeURIComponent(effisVersion)}`,
+      { cache: "force-cache" },
     )
       .then((response) => {
         if (!response.ok) throw new Error("EFFIS histórico no disponible");
@@ -975,7 +1046,7 @@ export default function Dashboard() {
     return () => {
       active = false;
     };
-  }, [displaySatellite, satelliteStorageId]);
+  }, [effisLayerAvailable, effisVersion, satelliteStorageId]);
 
   useEffect(() => {
     if (!mapReady || !mapRef.current || !window.L) return;
@@ -992,8 +1063,13 @@ export default function Dashboard() {
     });
     const satellite = displaySatellite;
     if (!satellite || !satelliteStorageId) return;
-    const layerUrl = (layer: "burnt" | "heat" | "smoke") =>
-      `/api/satellite?hour=${encodeURIComponent(satelliteStorageId)}&layer=${layer}&v=${encodeURIComponent(satellite.capturedAt)}`;
+    const layerUrl = (layer: "burnt" | "heat" | "smoke") => {
+      const version =
+        satellite.layerCapturedAt?.[layer] ||
+        satellite.layerSourceDate?.[layer] ||
+        satellite.capturedAt;
+      return `/api/satellite?hour=${encodeURIComponent(satelliteStorageId)}&layer=${layer}&v=${encodeURIComponent(version)}`;
+    };
     if (satellite.layers.burnt) {
       historicalBurntLayerRef.current = window.L.imageOverlay(
         layerUrl("burnt"),
@@ -1508,7 +1584,7 @@ export default function Dashboard() {
         ? `${currentAirStationCount} lecturas actuales · ${recoveredAirStationCount} últimas válidas`
         : `${displayAirStations.length} estaciones en la vista`,
       url: MITECO_ICA_URL,
-      read: selectedSnapshot?.capturedAt || airSourceReadAt,
+      read: selectedSnapshotSummary?.capturedAt || airSourceReadAt,
       ok: displayAirStations.length > 0,
     },
     {
@@ -1520,7 +1596,7 @@ export default function Dashboard() {
         ? `Centroides representativos · ${displayRegion.unmappedLocations.length} nombres sin ubicar`
         : "Centroides representativos; no perímetros oficiales",
       url: OFFICIAL_URL,
-      read: selectedSnapshot?.capturedAt || regionReadAt,
+      read: selectedSnapshotSummary?.capturedAt || regionReadAt,
       ok: true,
     },
     {
@@ -1571,7 +1647,7 @@ export default function Dashboard() {
             <span className="live-dot"></span>
             <span>
               <b>{isLive ? "Seguimiento activo" : "Snapshot"}</b>
-              <small>{isLive ? "Fuentes oficiales + satélite" : formatSnapshotTime(selectedSnapshot?.capturedAt || "")}</small>
+              <small>{isLive ? "Fuentes oficiales + satélite" : formatSnapshotTime(selectedSnapshotSummary?.capturedAt || "")}</small>
             </span>
           </div>
           <nav className="snapshot-nav" aria-label="Navegar por los snapshots horarios">
@@ -1708,7 +1784,7 @@ export default function Dashboard() {
                 <div className="eyebrow-row">
                   <span className="eyebrow">{isLive ? "SITUACIÓN ACTUAL" : "VISTA HISTÓRICA"}</span>
                   <span className="refresh-time">
-                    {isLive ? `Parte: ${displayStatus.lastUpdated}` : formatSnapshotTime(selectedSnapshot?.capturedAt || "")}
+                    {isLive ? `Parte: ${displayStatus.lastUpdated}` : formatSnapshotTime(selectedSnapshotSummary?.capturedAt || "")}
                   </span>
                 </div>
 

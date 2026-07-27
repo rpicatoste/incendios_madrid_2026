@@ -23,6 +23,14 @@ export async function GET(request: Request) {
       ? await readSatelliteManifest(hour)
       : await readSatelliteLayer(hour, layer as SatelliteLayer);
     const isLive = hour === "live";
+    const versioned = Boolean(url.searchParams.get("v"));
+    const cacheControl = !isLive
+      ? "public, max-age=31536000, immutable"
+      : isManifest
+        ? "public, max-age=300, stale-while-revalidate=86400"
+        : versioned
+          ? "public, max-age=31536000, immutable"
+          : "no-store";
     return new Response(contents, {
       headers: {
         "Content-Type":
@@ -31,9 +39,7 @@ export async function GET(request: Request) {
             : isManifest
               ? "application/json"
               : "image/png",
-        "Cache-Control": isLive
-          ? "no-store"
-          : "public, max-age=31536000, immutable",
+        "Cache-Control": cacheControl,
         "X-Content-Type-Options": "nosniff",
       },
     });

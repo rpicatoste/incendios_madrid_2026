@@ -1,11 +1,24 @@
+import { createHash } from "node:crypto";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type { FeatureCollection, MultiLineString, MultiPoint, MultiPolygon } from "geojson";
 
 const ACTIVATION_CODES = ["EMSR900", "EMSR898"] as const;
 const API_ROOT =
   "https://rapidmapping.emergency.copernicus.eu/backend/dashboard-api/public-activations/";
 const DATA_HOST = "rapidmapping-viewer.s3.eu-west-1.amazonaws.com";
-const TOLERANCE = 0.00025;
+const DISPLAY_GEOMETRY_VERSION = 2;
+const TOLERANCE = 0.001;
+const MIN_EXTERIOR_AREA_DEGREES = 0.00002;
+const MIN_HOLE_AREA_DEGREES = 0.0005;
 const METADATA_TTL_MS = 15 * 60 * 1000;
+const dataDirectory =
+  process.env.FOCO_DATA_DIR || join(process.cwd(), ".foco-data");
+const originalGeometryDirectory = join(
+  dataDirectory,
+  "cache",
+  "copernicus-original",
+);
 
 type Point = [number, number];
 type Product = {
@@ -90,6 +103,7 @@ export type CopernicusFireMap = FeatureCollection<
     frontProduct: string | null;
     frontObservedAt: string | null;
     frontKilometres: number | null;
+    geometryVersion: string;
     areas: CopernicusAreaSource[];
   };
 };
@@ -117,6 +131,62 @@ const fetchJson = async <T,>(url: string): Promise<T> => {
   });
   if (!response.ok) throw new Error(`Copernicus respondió ${response.status}`);
   return response.json() as Promise<T>;
+};
+
+const originalGeometryPath = (url: string) =>
+  join(
+    originalGeometryDirectory,
+    `${createHash("sha256").update(url).digest("hex")}.json`,
+  );
+
+const validRemoteCollection = (value: unknown): value is RemoteFeatureCollection =>
+  Boolean(
+    value &&
+    typeof value === "object" &&
+    Array.isArray((value as Partial<RemoteFeatureCollection>).features),
+  );
+
+const readOriginalGeometry = async (
+  url: string,
+): Promise<RemoteFeatureCollection | undefined> => {
+  try {
+    const value = JSON.parse(
+      await readFile(originalGeometryPath(url), "utf8"),
+    ) as unknown;
+    return validRemoteCollection(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const writeOriginalGeometry = async (url: string, raw: string) => {
+  const path = originalGeometryPath(url);
+  const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+  await mkdir(dirname(path), { recursive: true });
+  try {
+    await writeFile(temporaryPath, raw, { mode: 0o600 });
+    await rename(temporaryPath, path);
+  } finally {
+    await unlink(temporaryPath).catch(() => {});
+  }
+};
+
+const fetchOriginalGeometry = async (url: string) => {
+  const cached = await readOriginalGeometry(url);
+  if (cached) return cached;
+  const response = await fetch(url, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(30000),
+    headers: { "User-Agent": "FOCO-Centro/2.0" },
+  });
+  if (!response.ok) throw new Error(`Copernicus respondió ${response.status}`);
+  const raw = await response.text();
+  const value = JSON.parse(raw) as unknown;
+  if (!validRemoteCollection(value)) {
+    throw new Error("Copernicus devolvió una geometría no válida");
+  }
+  await writeOriginalGeometry(url, raw);
+  return value;
 };
 
 const officialJsonUrl = (product: Product, fragment: string) => {
@@ -216,8 +286,8 @@ const simplifyRadialDistance = (
 };
 
 const roundPoint = ([lon, lat]: Point): Point => [
-  Math.round(lon * 100000) / 100000,
-  Math.round(lat * 100000) / 100000,
+  Math.round(lon * 10000) / 10000,
+  Math.round(lat * 10000) / 10000,
 ];
 
 const simplifyLine = (coordinates: Point[]) =>
@@ -234,6 +304,29 @@ const simplifyRing = (coordinates: Point[]) => {
   const simplified = simplifyLine(openRing);
   const valid = simplified.length >= 3 ? simplified : openRing.map(roundPoint);
   return valid.length ? [...valid, valid[0]] : [];
+};
+
+const ringArea = (coordinates: Point[]) => {
+  if (coordinates.length < 3) return 0;
+  let doubledArea = 0;
+  for (let index = 0; index < coordinates.length; index += 1) {
+    const current = coordinates[index];
+    const next = coordinates[(index + 1) % coordinates.length];
+    doubledArea += current[0] * next[1] - next[0] * current[1];
+  }
+  return Math.abs(doubledArea) / 2;
+};
+
+const simplifyPolygon = (polygon: Point[][]) => {
+  const [exterior, ...holes] = polygon;
+  if (!exterior || ringArea(exterior) < MIN_EXTERIOR_AREA_DEGREES) return [];
+  const simplifiedExterior = simplifyRing(exterior);
+  if (simplifiedExterior.length < 4) return [];
+  const simplifiedHoles = holes
+    .filter((ring) => ringArea(ring) >= MIN_HOLE_AREA_DEGREES)
+    .map(simplifyRing)
+    .filter((ring) => ring.length >= 4);
+  return [simplifiedExterior, ...simplifiedHoles];
 };
 
 const polygonsFrom = (collection: RemoteFeatureCollection): Point[][][] =>
@@ -283,18 +376,18 @@ const getProductGeometry = async (product: Product): Promise<ProductGeometry> =>
     const flameUrl = officialJsonUrl(product, "_observedEventP_");
     const [area, fronts, flames] = await Promise.all([
       areaUrl
-        ? fetchJson<RemoteFeatureCollection>(areaUrl)
+        ? fetchOriginalGeometry(areaUrl)
         : Promise.resolve({ features: [] }),
       frontUrl
-        ? fetchJson<RemoteFeatureCollection>(frontUrl)
+        ? fetchOriginalGeometry(frontUrl)
         : Promise.resolve({ features: [] }),
       flameUrl
-        ? fetchJson<RemoteFeatureCollection>(flameUrl)
+        ? fetchOriginalGeometry(flameUrl)
         : Promise.resolve({ features: [] }),
     ]);
     return {
       polygons: polygonsFrom(area)
-        .map((polygon) => polygon.map(simplifyRing).filter((ring) => ring.length >= 4))
+        .map(simplifyPolygon)
         .filter((polygon) => polygon.length),
       lines: linesFrom(fronts).map(simplifyLine).filter((line) => line.length >= 2),
       points: pointsFrom(flames).map(roundPoint),
@@ -463,6 +556,22 @@ export const getCopernicusFireMap = async (): Promise<CopernicusFireMap> => {
         Date.parse(right.frontObservedAt || "") - Date.parse(left.frontObservedAt || ""),
     )[0];
   const activationCode = [...new Set(areaSources.map((area) => area.activationCode))].join(", ");
+  const geometryVersion = createHash("sha256")
+    .update(
+      JSON.stringify({
+        displayGeometryVersion: DISPLAY_GEOMETRY_VERSION,
+        areas: areaSources.map((area) => ({
+          activationCode: area.activationCode,
+          areaNumber: area.areaNumber,
+          areaProduct: area.areaProduct,
+          areaObservedAt: area.areaObservedAt,
+          frontProduct: area.frontProduct,
+          frontObservedAt: area.frontObservedAt,
+        })),
+      }),
+    )
+    .digest("hex")
+    .slice(0, 16);
   return {
     type: "FeatureCollection",
     source: {
@@ -482,6 +591,7 @@ export const getCopernicusFireMap = async (): Promise<CopernicusFireMap> => {
       frontKilometres:
         areaSources.reduce((total, area) => total + (area.frontKilometres || 0), 0) ||
         null,
+      geometryVersion,
       areas: areaSources,
     },
     features: areas.flatMap((area) => area.features),

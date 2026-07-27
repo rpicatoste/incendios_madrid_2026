@@ -86,6 +86,9 @@ const listAfter = (html: string, startPattern: RegExp) => {
   };
 };
 
+const isShelterSummary = (value: string) =>
+  /^(?:Personas|Escuelas|Residencias(?: y centros)?|Atenciones|La Comunidad|\d+\s+Autobuses|\d+\s+puntos?\s+de Atención)/i.test(value);
+
 const fetchMadridStatus = async (): Promise<MadridStatus> => {
   const fetchedAt = new Date().toISOString();
   try {
@@ -114,7 +117,7 @@ const fetchMadridStatus = async (): Promise<MadridStatus> => {
     const confined = confinedSection.items
       .filter((item) => !/^(?:Municipios confinados|Confinamientos):?$/i.test(item))
       .map((item) => item.replace(/\.$/, ""));
-    const shelters = sheltersSection.items;
+    const shelters = sheltersSection.items.filter((item) => !isShelterSummary(item));
     const roads = roadsSection.items.map((row) => row.split(":")[0].trim());
     const operationalMatch = plainText.match(/Situación Operativa\s*([0-3])/i);
     const explicitState = plainText.match(/\b(extinguido|controlado|estabilizado)\b/i);

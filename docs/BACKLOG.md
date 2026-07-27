@@ -81,14 +81,19 @@ FOCO integra todas las áreas entregadas de Copernicus EMSR900 y EMSR898:
 Brieva, Villa del Prado, La Atalaya, La Mierla y Selas. Cada perímetro, frente y
 llama usa el producto más reciente que contiene esa geometría y muestra su hora
 propia de observación. Los círculos orientativos solo se ocultan cuando existe
-una correspondencia explícita con un perímetro oficial.
+una correspondencia explícita con un perímetro oficial. El 27 de julio se añadió
+copia privada exacta de cada GeoJSON original y una geometría de visualización
+muy simplificada, sin componentes pequeños ni agujeros: la comprobación real
+redujo la entrega de unas 23 MB y más de 1,1 millones de coordenadas a unos
+93 KB y 4.798 coordenadas, sin perder el original del servidor.
 
-## 6. Partículas de viento suaves — completado el 26 de julio de 2026
+## 6. Partículas de viento suaves — completado y revisado el 27 de julio de 2026
 
 Valorar una visualización de pocas partículas, limitada en FPS, reducida en
 móviles y desactivada cuando el usuario solicite movimiento reducido.
 
-La capa usa 12 partículas en móvil o 24 en escritorio, un máximo de 20 FPS y
-una densidad/velocidad suave vinculada al viento actual. Se pausa con la pestaña
-oculta, no captura clics, respeta `prefers-reduced-motion` y dispone de un
-interruptor propio en la leyenda.
+La capa empieza apagada y, por tanto, no consulta el viento ambiental ni crea
+un bucle de animación. Al encenderla usa 18 partículas en móvil o 34 en
+escritorio, trazos azules con halo blanco y un máximo real de 15 FPS. Se pausa
+con la pestaña oculta, no captura clics, respeta `prefers-reduced-motion` y
+dispone de un interruptor propio en la leyenda.

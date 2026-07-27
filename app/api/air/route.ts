@@ -3,9 +3,8 @@ import { dirname, join } from "node:path";
 
 const ICA_URL = "https://ica.miteco.es/datos/ica-ultima-hora.csv";
 const CACHE_TTL_MS = 15 * 60 * 1000;
-const CACHE_SCHEMA_VERSION = 2;
-const LAST_VALID_SCHEMA_VERSION = 1;
-const LAST_VALID_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+const CACHE_SCHEMA_VERSION = 3;
+const LAST_VALID_SCHEMA_VERSION = 2;
 const MIN_CURRENT_COVERAGE = 0.5;
 const LOCK_STALE_MS = 30 * 1000;
 const LOCK_WAIT_MS = 12 * 1000;
@@ -160,12 +159,9 @@ const readFallbackStations = async () => {
     ])
   ).flat();
   const latest = new Map<number, AirStation>();
-  const now = Date.now();
-
   for (const station of candidates) {
     if (!isValidStationReading(station)) continue;
     const timestamp = observedTime(station);
-    if (now - timestamp > LAST_VALID_MAX_AGE_MS) continue;
     const previous = latest.get(station.id);
     if (!previous || timestamp > observedTime(previous)) {
       latest.set(station.id, station);
@@ -274,158 +270,200 @@ const responseFromCache = (cache: CacheEntry, stale = false) =>
     { headers: stale ? ERROR_CACHE_HEADERS : CACHE_HEADERS },
   );
 
-const unavailableResponse = () =>
-  Response.json(
-    {
-      stations: [],
-      fetchedAt: new Date().toISOString(),
-      source: ICA_URL,
-      sourceLabel: "Índice Nacional de Calidad del Aire · MITECO",
-      sourceOk: false,
-      stale: true,
+const unavailableResponse = async () => {
+  const fallbackStations = await readFallbackStations();
+  const stations = [...fallbackStations.values()].map((station) => ({
+    ...station,
+    delayed: true,
+    upstreamMissing: true,
+    carriedForward: true,
+  }));
+  const payload = {
+    stations,
+    fetchedAt: new Date().toISOString(),
+    source: ICA_URL,
+    sourceLabel: "Índice Nacional de Calidad del Aire · MITECO",
+    sourceOk: false,
+    stale: true,
+    degraded: true,
+    coverage: {
+      total: stations.length,
+      reported: 0,
+      carriedForward: stations.length,
+      noData: 0,
     },
-    { status: 200, headers: ERROR_CACHE_HEADERS },
-  );
+  };
+  const cache: CacheEntry = {
+    schemaVersion: CACHE_SCHEMA_VERSION,
+    expiresAt: Date.now() + 5 * 60 * 1000,
+    payload,
+  };
+  await writeDiskCache(cache).catch(() => {});
+  return Response.json(payload, { status: 200, headers: ERROR_CACHE_HEADERS });
+};
+
+const refreshAirCache = async (): Promise<CacheEntry> => {
+  const response = await fetch(ICA_URL, {
+    signal: AbortSignal.timeout(10000),
+    headers: { "User-Agent": "FOCO-Centro/2.0" },
+  });
+  if (!response.ok) throw new Error("National air quality feed unavailable");
+  const csv = await response.text();
+  const rows = csv.trim().split(/\r?\n/).slice(1);
+  const stations = rows
+    .map((line): AirStation => {
+      const [code, name, type, latRaw, lonRaw, activeRaw, observedAt, rawIndex, pollutant] =
+        parseCsvLine(line);
+      const lat = Number(latRaw);
+      const lon = Number(lonRaw);
+      const suppliedIndex = Number(rawIndex);
+      const normalizedIndex =
+        suppliedIndex >= 10 ? Math.floor(suppliedIndex / 10) : suppliedIndex;
+      const hasValidIndex =
+        rawIndex.trim() !== "" &&
+        Number.isInteger(normalizedIndex) &&
+        normalizedIndex >= 1 &&
+        normalizedIndex <= 6;
+      const index = hasValidIndex ? normalizedIndex : 0;
+      const status = quality[index] || quality[0];
+      const observation = hasValidIndex && observedAt ? observedAt + "Z" : null;
+      return {
+        id: Number(code),
+        name,
+        type,
+        lat,
+        lon,
+        active: activeRaw === "true",
+        label: status.label,
+        color: status.color,
+        pollutant: hasValidIndex && pollutant ? pollutant : null,
+        value: null,
+        index,
+        incomplete: hasValidIndex && suppliedIndex >= 10,
+        hour: observation ? formatObservedAt(observedAt) : null,
+        observedAt: observation,
+        delayed: observationIsDelayed(observation),
+        upstreamMissing: !hasValidIndex,
+      };
+    })
+    .filter(
+      (station) =>
+        station.active &&
+        Number.isFinite(station.lat) &&
+        Number.isFinite(station.lon) &&
+        station.lat >= 39.35 &&
+        station.lat <= 42.15 &&
+        station.lon >= -5.9 &&
+        station.lon <= -1.7,
+    );
+  if (!stations.length) throw new Error("National air quality feed returned no stations");
+
+  const fallbackStations = await readFallbackStations();
+  for (const station of stations) {
+    if (!isValidStationReading(station)) continue;
+    const previous = fallbackStations.get(station.id);
+    if (!previous || observedTime(station) > observedTime(previous)) {
+      fallbackStations.set(station.id, station);
+    }
+  }
+
+  const currentStationIds = new Set(stations.map((station) => station.id));
+  const mergedStations = stations.map((station) => {
+    if (isValidStationReading(station)) return station;
+    const fallback = fallbackStations.get(station.id);
+    if (!fallback) return station;
+    return {
+      ...station,
+      label: fallback.label,
+      color: fallback.color,
+      pollutant: fallback.pollutant,
+      index: fallback.index,
+      incomplete: fallback.incomplete,
+      hour: fallback.hour,
+      observedAt: fallback.observedAt,
+      delayed: true,
+      upstreamMissing: true,
+      carriedForward: true,
+    };
+  });
+  for (const fallback of fallbackStations.values()) {
+    if (
+      currentStationIds.has(fallback.id) ||
+      !fallback.active ||
+      fallback.lat < 39.35 ||
+      fallback.lat > 42.15 ||
+      fallback.lon < -5.9 ||
+      fallback.lon > -1.7
+    ) {
+      continue;
+    }
+    mergedStations.push({
+      ...fallback,
+      delayed: true,
+      upstreamMissing: true,
+      carriedForward: true,
+    });
+  }
+  await writeLastValidStations([...fallbackStations.values()]).catch(() => {});
+
+  const reportedStations = stations.filter(isValidStationReading).length;
+  const carriedForwardStations = mergedStations.filter(
+    (station) => station.carriedForward,
+  ).length;
+  const noDataStations =
+    mergedStations.length - reportedStations - carriedForwardStations;
+  const degraded = reportedStations / mergedStations.length < MIN_CURRENT_COVERAGE;
+  const payload = {
+    stations: mergedStations,
+    fetchedAt: new Date().toISOString(),
+    source: ICA_URL,
+    sourceLabel: "Índice Nacional de Calidad del Aire · MITECO",
+    sourceOk: true,
+    stale: false,
+    degraded,
+    coverage: {
+      total: mergedStations.length,
+      reported: reportedStations,
+      carriedForward: carriedForwardStations,
+      noData: noDataStations,
+    },
+  };
+  const cache: CacheEntry = {
+    schemaVersion: CACHE_SCHEMA_VERSION,
+    expiresAt: Date.now() + CACHE_TTL_MS,
+    payload,
+  };
+  await writeDiskCache(cache);
+  return cache;
+};
 
 export async function GET() {
   let cached = await readDiskCache();
   if (cached && cached.expiresAt > Date.now()) return responseFromCache(cached);
 
+  if (cached) {
+    const ownsRefreshLock = await acquireRefreshLock();
+    if (ownsRefreshLock) {
+      void refreshAirCache()
+        .catch(() => {})
+        .finally(releaseRefreshLock);
+    }
+    return responseFromCache(cached, true);
+  }
+
   const ownsRefreshLock = await acquireRefreshLock();
   if (!ownsRefreshLock) {
     const refreshed = await waitForFreshCache();
-    if (refreshed) return responseFromCache(refreshed);
-    cached = (await readDiskCache()) || cached;
-    return cached ? responseFromCache(cached, true) : unavailableResponse();
+    return refreshed ? responseFromCache(refreshed) : unavailableResponse();
   }
 
   try {
-    const refreshed = await readDiskCache();
-    if (refreshed && refreshed.expiresAt > Date.now()) {
-      return responseFromCache(refreshed);
-    }
-    cached = refreshed || cached;
-
-    try {
-      const response = await fetch(ICA_URL, {
-        signal: AbortSignal.timeout(10000),
-        headers: { "User-Agent": "FOCO-Centro/2.0" },
-      });
-      if (!response.ok) throw new Error("National air quality feed unavailable");
-      const csv = await response.text();
-      const rows = csv.trim().split(/\r?\n/).slice(1);
-      const stations = rows
-        .map((line): AirStation => {
-          const [code, name, type, latRaw, lonRaw, activeRaw, observedAt, rawIndex, pollutant] =
-            parseCsvLine(line);
-          const lat = Number(latRaw);
-          const lon = Number(lonRaw);
-          const suppliedIndex = Number(rawIndex);
-          const normalizedIndex =
-            suppliedIndex >= 10 ? Math.floor(suppliedIndex / 10) : suppliedIndex;
-          const hasValidIndex =
-            rawIndex.trim() !== "" &&
-            Number.isInteger(normalizedIndex) &&
-            normalizedIndex >= 1 &&
-            normalizedIndex <= 6;
-          const index = hasValidIndex ? normalizedIndex : 0;
-          const status = quality[index] || quality[0];
-          const observation =
-            hasValidIndex && observedAt ? observedAt + "Z" : null;
-          return {
-            id: Number(code),
-            name,
-            type,
-            lat,
-            lon,
-            active: activeRaw === "true",
-            label: status.label,
-            color: status.color,
-            pollutant: hasValidIndex && pollutant ? pollutant : null,
-            value: null,
-            index,
-            incomplete: hasValidIndex && suppliedIndex >= 10,
-            hour: observation ? formatObservedAt(observedAt) : null,
-            observedAt: observation,
-            delayed: observationIsDelayed(observation),
-            upstreamMissing: !hasValidIndex,
-          };
-        })
-        .filter(
-          (station) =>
-            station.active &&
-            Number.isFinite(station.lat) &&
-            Number.isFinite(station.lon) &&
-            station.lat >= 39.35 &&
-            station.lat <= 42.15 &&
-            station.lon >= -5.9 &&
-            station.lon <= -1.7,
-        );
-      if (!stations.length) throw new Error("National air quality feed returned no stations");
-
-      const fallbackStations = await readFallbackStations();
-      for (const station of stations) {
-        if (!isValidStationReading(station)) continue;
-        const previous = fallbackStations.get(station.id);
-        if (!previous || observedTime(station) > observedTime(previous)) {
-          fallbackStations.set(station.id, station);
-        }
-      }
-
-      const mergedStations = stations.map((station) => {
-        if (isValidStationReading(station)) return station;
-        const fallback = fallbackStations.get(station.id);
-        if (!fallback) return station;
-        return {
-          ...station,
-          label: fallback.label,
-          color: fallback.color,
-          pollutant: fallback.pollutant,
-          index: fallback.index,
-          incomplete: fallback.incomplete,
-          hour: fallback.hour,
-          observedAt: fallback.observedAt,
-          delayed: observationIsDelayed(fallback.observedAt),
-          upstreamMissing: true,
-          carriedForward: true,
-        };
-      });
-      await writeLastValidStations([...fallbackStations.values()]).catch(() => {});
-
-      const reportedStations = stations.filter(isValidStationReading).length;
-      const carriedForwardStations = mergedStations.filter(
-        (station) => station.carriedForward,
-      ).length;
-      const noDataStations =
-        mergedStations.length - reportedStations - carriedForwardStations;
-      const degraded =
-        reportedStations / mergedStations.length < MIN_CURRENT_COVERAGE;
-
-      const payload = {
-        stations: mergedStations,
-        fetchedAt: new Date().toISOString(),
-        source: ICA_URL,
-        sourceLabel: "Índice Nacional de Calidad del Aire · MITECO",
-        sourceOk: true,
-        stale: false,
-        degraded,
-        coverage: {
-          total: mergedStations.length,
-          reported: reportedStations,
-          carriedForward: carriedForwardStations,
-          noData: noDataStations,
-        },
-      };
-      const cache = {
-        schemaVersion: CACHE_SCHEMA_VERSION,
-        expiresAt: Date.now() + CACHE_TTL_MS,
-        payload,
-      };
-      await writeDiskCache(cache).catch(() => {});
-      return Response.json(payload, { headers: CACHE_HEADERS });
-    } catch {
-      return cached ? responseFromCache(cached, true) : unavailableResponse();
-    }
+    cached = await readDiskCache();
+    if (cached && cached.expiresAt > Date.now()) return responseFromCache(cached);
+    const refreshed = await refreshAirCache();
+    return responseFromCache(refreshed);
+  } catch {
+    return unavailableResponse();
   } finally {
     await releaseRefreshLock();
   }

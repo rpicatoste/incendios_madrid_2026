@@ -40,10 +40,13 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
 - Previsión horaria compacta para cualquier punto, incluso dentro de las zonas
   aproximadas, con temperatura y símbolos meteorológicos legibles. La flecha
   azul del punto se orienta con el viento.
-- Visualización ambiental opcional de viento con 12 partículas en móvil o 24
-  en escritorio, limitada a 20 FPS, pausada con la pestaña oculta y desactivada
-  para `prefers-reduced-motion`.
-- Navegación entre snapshots horarios y vivo.
+- Visualización ambiental opcional de viento, apagada por defecto. Mientras está
+  apagada no consulta Open-Meteo ni anima. Al activarla muestra trazos azules con
+  halo blanco: 18 partículas en móvil o 34 en escritorio, limitadas a 15 FPS,
+  pausadas con la pestaña oculta y desactivadas para `prefers-reduced-motion`.
+- Navegación entre snapshots horarios y vivo. La consulta periódica descarga
+  solo el índice ligero; cada snapshot completo se obtiene y cachea únicamente
+  al seleccionarlo.
 - Evacuaciones y confinamientos de Madrid reconstruidos automáticamente desde
   la página oficial. Fuera de Madrid se conservan relaciones nominales
   oficiales fechadas: JCyL, FIDIAS/CLM y RAN no ofrecen actualmente una fuente
@@ -53,7 +56,11 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
 - Copernicus integra EMSR900 y EMSR898: Brieva, Villa del Prado, La Atalaya, La
   Mierla y Selas. Cada área, frente y llama conserva el producto y la hora de
   observación propios; los círculos aproximados solo desaparecen cuando existe
-  una correspondencia explícita con el perímetro oficial.
+  una correspondencia explícita con el perímetro oficial. El servidor conserva
+  los GeoJSON originales exactos en `data/cache/copernicus-original/` con modo
+  privado y entrega una versión drásticamente simplificada: elimina componentes
+  pequeños y agujeros, redondea y simplifica bordes. Una versión estable evita
+  volver a descargar la misma geometría en cada refresco del manifiesto.
 - El área EFFIS principal es GeoJSON estructurado de los últimos 30 días y queda
   congelado en cada snapshot v4. El PNG 4096×2731 es un respaldo legado que se
   intenta cada seis horas. Hotspots y humo se cachean a 1600×1067 desde NASA
@@ -82,21 +89,26 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
   hora; el ráster WMS legado, cada seis horas. La interfaz muestra por separado
   lectura, fecha del producto y última modificación real en la zona.
 - NASA GIBS: detecciones térmicas VIIRS de NOAA-20 y Suomi NPP, más
-  humo/aerosoles VIIRS.
+  humo/aerosoles VIIRS. La captura reutiliza calor durante 30 minutos y humo
+  durante 6 horas; las URLs versionadas permiten que navegador/proxy conserven
+  indefinidamente una copia que ya descargaron.
 - MITECO: sensores de calidad del aire; caché y refresco cada quince minutos.
-  La hora de observación se muestra en horario peninsular, se avisa si supera
-  tres horas de antigüedad y, si la fuente deja índices vacíos, se conservan
-  durante un máximo de doce horas las últimas lecturas válidas. La caché general
-  y `data/cache/air-quality-last-valid.json` se escriben de forma atómica con
-  modo `0600`. Los refrescos simultáneos comparten un bloqueo corto. Producción
+  La hora de observación se muestra en horario peninsular y se avisa si supera
+  tres horas. Si la fuente deja índices vacíos, se conserva sin límite temporal
+  destructivo la última lectura válida conocida por estación, incluida la de los
+  snapshots, y se marca como recuperada. Una caché vencida se sirve de inmediato
+  mientras un único proceso refresca en segundo plano. La caché general y
+  `data/cache/air-quality-last-valid.json` se escriben de forma atómica con
+  modo `0600`. Producción
   carga la autoridad intermedia pública de FNMT desde `ops/fnmt-components.pem`; la
   validación TLS nunca se desactiva.
 - Open-Meteo: previsión puntual solicitada por el navegador; se renueva cada
   quince minutos mientras el panel del punto permanece abierto. El viento
   ambiental de Madrid se renueva cada treinta minutos para las partículas.
 - El navegador renueva estado cada dos minutos y región, noticias, manifiesto
-  satelital y lista de snapshots cada cinco minutos; también refresca al volver
-  a primer plano o recuperar conexión.
+  satelital e índice de snapshots cada cinco minutos; también refresca al volver
+  a primer plano o recuperar conexión. Región usa caché persistente de cinco
+  minutos y stale-while-revalidate, evitando geocodificar resúmenes estadísticos.
 
 - Analítica: el navegador registra como máximo una señal por sesión. El servidor
   agrupa ventanas de treinta minutos y países aproximados, sin persistir IP,
