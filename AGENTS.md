@@ -45,7 +45,10 @@ y volver a iniciar `foco-app.service`.
 - La capa de humo empieza desactivada.
 - Los pines de situación no solicitan previsión; las grandes áreas aproximadas
   de incendio y los clics libres en el mapa sí pueden hacerlo.
-- El indicador de previsión puntual es una flecha azul orientada con el viento.
+- El indicador de previsión puntual, las flechas horarias y las partículas
+  apuntan hacia donde se desplaza el aire. Open-Meteo entrega la dirección de
+  origen meteorológica: convertirla siempre sumando 180° antes de dibujar una
+  flecha con punta o animar el movimiento.
 - La capa de viento empieza desactivada: mientras siga apagada no solicita el
   viento ambiental ni ejecuta animación. Al activarla usa 18 partículas en móvil
   o 34 en escritorio, limitadas a 15 FPS, se pausa con la pestaña oculta y

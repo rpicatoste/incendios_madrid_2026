@@ -208,6 +208,11 @@ const compass = (degrees: number) => {
   return directions[Math.round(degrees / 45) % 8];
 };
 
+// Open-Meteo sigue la convención meteorológica: indica de dónde viene el
+// viento. Las flechas con punta y las partículas muestran hacia dónde viaja.
+const windMovementDirection = (windFromDegrees: number) =>
+  ((windFromDegrees + 180) % 360 + 360) % 360;
+
 const skySymbol = (hour: ForecastHour) => {
   if (!hour.isDay && hour.weatherCode <= 2) return { symbol: "☾", label: "Noche despejada" };
   if (hour.weatherCode === 0) return { symbol: "☀️", label: "Despejado" };
@@ -364,6 +369,10 @@ export default function Dashboard() {
     typeof rawWindDirection === "number" && Number.isFinite(rawWindDirection)
       ? Math.round(((rawWindDirection % 360) + 360) % 360)
       : null;
+  const currentWindMovementDirection =
+    currentWindDirection === null
+      ? null
+      : windMovementDirection(currentWindDirection);
   const currentWindSpeed =
     typeof forecastWindSpeed === "number" && Number.isFinite(forecastWindSpeed)
       ? Math.max(0, forecastWindSpeed)
@@ -839,14 +848,14 @@ export default function Dashboard() {
   useEffect(() => {
     if (!mapReady || !mapRef.current || !window.L || !selectedPoint) return;
     const latLng: [number, number] = [selectedPoint.lat, selectedPoint.lon];
-    const pendingClass = currentWindDirection === null ? " is-pending" : "";
+    const pendingClass = currentWindMovementDirection === null ? " is-pending" : "";
     const icon = window.L.divIcon({
       className: "foco-map-icon",
       html:
         '<span class="forecast-point-symbol forecast-point-symbol--map' +
         pendingClass +
         '" aria-hidden="true"><i class="forecast-wind-arrow" style="transform:rotate(' +
-        (currentWindDirection ?? 0) +
+        (currentWindMovementDirection ?? 0) +
         'deg)">↑</i></span>',
       iconSize: [30, 30],
       iconAnchor: [15, 15],
@@ -865,7 +874,7 @@ export default function Dashboard() {
       keyboard: false,
       zIndexOffset: 2200,
     }).addTo(mapRef.current);
-  }, [currentWindDirection, mapReady, selectedPoint]);
+  }, [currentWindMovementDirection, mapReady, selectedPoint]);
 
   useEffect(() => {
     const canvas = windCanvasRef.current;
@@ -899,7 +908,8 @@ export default function Dashboard() {
     let timer = 0;
     let previousFrame = performance.now();
     let hidden = document.hidden;
-    const bearing = ((particleWindDirection + 180) * Math.PI) / 180;
+    const bearing =
+      (windMovementDirection(particleWindDirection) * Math.PI) / 180;
     const directionX = Math.sin(bearing);
     const directionY = -Math.cos(bearing);
     const velocity = Math.min(78, 22 + particleWindSpeed * 1.15);
@@ -1950,7 +1960,7 @@ export default function Dashboard() {
               <button
                 aria-pressed={windParticlesVisible}
                 onClick={() => setWindParticlesVisible(!windParticlesVisible)}
-                title="Pocas partículas muestran hacia dónde se desplaza el viento; se reducen en móvil y se desactivan con movimiento reducido"
+                title="Las partículas y flechas muestran hacia dónde se desplaza el aire; se reducen en móvil y se desactivan con movimiento reducido"
               >
                 <i className="legend-wind">→</i><span>Viento suave</span><em>{windParticlesVisible ? "ON" : "OFF"}</em>
               </button>
@@ -1983,11 +1993,16 @@ export default function Dashboard() {
                     <i className="forecast-point-symbol forecast-point-symbol--title" aria-hidden="true">
                       <span
                         className={
-                          currentWindDirection === null
+                          currentWindMovementDirection === null
                             ? "forecast-wind-arrow is-pending"
                             : "forecast-wind-arrow"
                         }
-                        style={{ transform: "rotate(" + (currentWindDirection ?? 0) + "deg)" }}
+                        style={{ transform: "rotate(" + (currentWindMovementDirection ?? 0) + "deg)" }}
+                        title={
+                          currentWindMovementDirection === null
+                            ? undefined
+                            : `Hacia ${compass(currentWindMovementDirection)}`
+                        }
                       >
                         ↑
                       </span>
@@ -2045,13 +2060,19 @@ export default function Dashboard() {
                             <span className="weather-temperature">{Math.round(hour.temperature)}°</span>
                           </div>
                           <div className="weather-metric wind">
-                            <strong className="wind-stack" aria-label={`Viento ${compass(hour.windDirection)}, ${hour.wind} kilómetros por hora`}>
-                              <span className="wind-direction">
-                                {compass(hour.windDirection)}
+                            <strong
+                              className="wind-stack"
+                              aria-label={`Viento desde ${compass(hour.windDirection)} hacia ${compass(windMovementDirection(hour.windDirection))}, ${hour.wind} kilómetros por hora`}
+                            >
+                              <span
+                                className="wind-direction"
+                                title={`Desde ${compass(hour.windDirection)} hacia ${compass(windMovementDirection(hour.windDirection))}`}
+                              >
+                                {compass(windMovementDirection(hour.windDirection))}
                                 <i
                                   className="wind-arrow"
                                   aria-hidden="true"
-                                  style={{ transform: `rotate(${hour.windDirection}deg)` }}
+                                  style={{ transform: `rotate(${windMovementDirection(hour.windDirection)}deg)` }}
                                 >
                                   ↑
                                 </i>

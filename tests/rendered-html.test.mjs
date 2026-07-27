@@ -254,8 +254,10 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(dashboard, /pane: "foco-forecast-point"/);
   assert.equal(dashboard.includes("forecast-point-symbol--map"), true);
   assert.equal(dashboard.includes('className="forecast-point-symbol forecast-point-symbol--title"'), true);
-  assert.equal(dashboard.includes("currentWindDirection === null"), true);
-  assert.equal(dashboard.includes("currentWindDirection ?? 0"), true);
+  assert.match(dashboard, /const windMovementDirection/);
+  assert.match(dashboard, /windFromDegrees \+ 180/);
+  assert.match(dashboard, /currentWindMovementDirection === null/);
+  assert.match(dashboard, /windMovementDirection\(particleWindDirection\)/);
   assert.equal(dashboard.includes("REFRESH_INTERVALS.forecast"), true);
   assert.equal(dashboard.includes('current: "wind_direction_10m,wind_speed_10m"'), true);
   assert.equal(dashboard.includes('forecast_hours: "12"'), true);
@@ -276,7 +278,9 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(dashboard, /className="wind-arrow"/);
   assert.match(dashboard, /className="wind-stack"/);
   assert.match(dashboard, /className="wind-speed"/);
-  assert.match(dashboard, /rotate\(\$\{hour\.windDirection\}deg\)/);
+  assert.match(dashboard, /rotate\(\$\{windMovementDirection\(hour\.windDirection\)\}deg\)/);
+  assert.doesNotMatch(dashboard, /rotate\(\$\{hour\.windDirection\}deg\)/);
+  assert.match(dashboard, /Viento desde .* hacia/);
   assert.match(dashboard, /weather_code,is_day/);
   assert.match(dashboard, /className="sky-symbol"/);
   assert.match(dashboard, /className="wind-particles"/);

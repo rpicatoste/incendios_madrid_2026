@@ -96,4 +96,7 @@ La capa empieza apagada y, por tanto, no consulta el viento ambiental ni crea
 un bucle de animación. Al encenderla usa 18 partículas en móvil o 34 en
 escritorio, trazos azules con halo blanco y un máximo real de 15 FPS. Se pausa
 con la pestaña oculta, no captura clics, respeta `prefers-reduced-motion` y
-dispone de un interruptor propio en la leyenda.
+dispone de un interruptor propio en la leyenda. El 27 de julio se unificó la
+convención visual: Open-Meteo informa de dónde viene el viento y FOCO suma 180°
+para que partículas, flecha del punto y flechas horarias indiquen todas hacia
+dónde se desplaza el aire.

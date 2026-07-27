@@ -39,7 +39,9 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
   aire, zonas aproximadas y posición del usuario.
 - Previsión horaria compacta para cualquier punto, incluso dentro de las zonas
   aproximadas, con temperatura y símbolos meteorológicos legibles. La flecha
-  azul del punto se orienta con el viento.
+  azul del punto, las flechas horarias y las partículas apuntan hacia donde se
+  desplaza el aire. Open-Meteo expresa de dónde viene: FOCO suma 180° para la
+  representación con punta y muestra el texto accesible «desde… hacia…».
 - Visualización ambiental opcional de viento, apagada por defecto. Mientras está
   apagada no consulta Open-Meteo ni anima. Al activarla muestra trazos azules con
   halo blanco: 18 partículas en móvil o 34 en escritorio, limitadas a 15 FPS,
