@@ -429,9 +429,16 @@ button {
 }
 
 .roads-summary {
-  margin: 0 2px 15px;
+  margin: 0 2px 4px;
   color: #758385;
   font-size: 8px;
+}
+
+.freshness-summary {
+  margin: 0 2px 15px;
+  color: #6f5d84;
+  font-size: 8px;
+  line-height: 1.4;
 }
 
 .geocode-note {
@@ -1256,6 +1263,36 @@ button {
   font-style: normal;
 }
 
+.legend-heading--history {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid #dce4df;
+}
+
+.legend-items--history {
+  grid-template-columns: 1fr;
+}
+
+.legend-items .legend-history-toggle {
+  border-color: #cfc5dc;
+  background: #faf7fd;
+}
+
+.legend-history {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  border: 1px dashed #75618c;
+  border-radius: 4px;
+  color: #75618c;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 14px;
+  text-align: center;
+}
+
 .legend-dot {
   width: 10px;
   height: 10px;
@@ -1995,6 +2032,10 @@ button {
 
   .legend-items button span {
     font-size: 9px;
+  }
+
+  .legend-items--history .legend-history-toggle {
+    min-width: 100%;
   }
 
   .forecast-hint {

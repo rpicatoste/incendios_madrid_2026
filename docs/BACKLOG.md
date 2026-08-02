@@ -108,3 +108,31 @@ la capa, comparte la respuesta, la conserva una hora en disco y no ejecuta ning�
 refresco programado sin usuarios. El cliente interpola componentes este/norte en
 cada posición; cada trazo vive entre 1,8 y 4,2 segundos, se desvanece y reaparece
 en un punto aleatorio. Pulsar una previsión puntual ya no cambia el campo global.
+
+## 7. Separar situación reciente e histórica — completado el 2 de agosto de 2026
+
+La auditoría detectó que FOCO seguía presentando como actuales relaciones
+estáticas del 24 de julio cuando el nuevo formato de la fuente de Madrid ya no
+coincidía con el parser. La hora de lectura se estaba confundiendo además con la
+vigencia de algunos estados.
+
+- La fuente madrileña del 2 de agosto mantiene Sierra Oeste estabilizado, en
+  fase de control y Situación Operativa 2. Siguen sin retorno siete
+  urbanizaciones: dos en Pelayos de la Presa y cinco en San Martín de
+  Valdeiglesias. Ya no publica confinamientos vigentes, declara cerrados los 24
+  puntos de acogida y solo mantiene cortada la M-957.
+- Burgohondo continúa `Activo`, Nivel 2 y en perimetración en el parte
+  estructurado de JCyL del 1 de agosto. FIDIAS mantiene la ficha incompleta de
+  La Mierla en Nivel 1, pero sin fecha posterior a su detección del 16 de julio
+  y sin control o extinción especificados; por ello queda en histórico, mientras
+  que las restricciones a la población quedaron levantadas el 26 de julio.
+- La vista reciente aplica una ventana máxima de 48 horas a órdenes, puntos,
+  zonas aproximadas y observaciones satelitales. El histórico está apagado por
+  defecto y se activa de forma explícita en su propia sección de la leyenda.
+- EFFIS se clasifica por la observación del incendio (`lastFireDate` o
+  `fireDate`), no por `lastupdate`. Copernicus se clasifica por `observedAt`.
+  La lectura de FOCO nunca rejuvenece una geometría ni una orden.
+- En la auditoría del 2 de agosto, ninguna de las 42 geometrías EFFIS ni de las
+  geometrías EMSR900/EMSR898 tenía observación dentro de las últimas 48 horas;
+  por ello pasan al histórico. El producto térmico VIIRS del día sigue en la
+  vista reciente.

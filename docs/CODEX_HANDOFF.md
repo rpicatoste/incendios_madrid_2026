@@ -52,14 +52,28 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
 - Navegación entre snapshots horarios y vivo. La consulta periódica descarga
   solo el índice ligero; cada snapshot completo se obtiene y cachea únicamente
   al seleccionarlo.
+- La vista viva separa datos recientes e históricos. Por defecto solo dibuja
+  órdenes, puntos y observaciones fechados en las últimas 48 horas; el histórico
+  queda tras un interruptor propio apagado. La clasificación usa la fecha real
+  de la orden u observación, no la lectura de FOCO ni el procesamiento posterior.
 - Evacuaciones y confinamientos de Madrid reconstruidos automáticamente desde
   la página oficial. Fuera de Madrid se conservan únicamente relaciones
   nominales oficiales fechadas: la nota autonómica del 26 de julio levantó
   todas las evacuaciones y confinamientos de La Mierla, por lo que Guadalajara
   queda solo en seguimiento. JCyL, FIDIAS/CLM y RAN no ofrecen actualmente una
   fuente estructurada equivalente y FOCO nunca infiere localidades afectadas.
+- La revisión del 2 de agosto corrigió el nuevo formato de la página madrileña:
+  Sierra Oeste continúa estabilizado, en fase de control y Situación Operativa
+  2. Permanecen sin retorno siete urbanizaciones, representadas mediante dos
+  puntos municipales (Pelayos de la Presa y San Martín de Valdeiglesias); no se
+  publican confinamientos vigentes, los 24 puntos de acogida están cerrados y
+  solo figura cortada la M-957. El incendio activo y las medidas de población
+  se muestran como conceptos distintos.
 - Pestaña `Actualidad` con estados de Sierra Oeste, Burgohondo y La Mierla,
-  además de publicaciones filtradas de fuentes oficiales.
+  además de publicaciones filtradas de fuentes oficiales. La ficha incompleta
+  de La Mierla conserva Nivel 1, pero como no aporta una fecha posterior a la
+  detección del 16 de julio y deja control/extinción sin especificar, se presenta
+  como histórica y no se rejuvenece con la hora de lectura de FOCO.
 - Copernicus integra EMSR900 y EMSR898: Brieva, Villa del Prado, La Atalaya, La
   Mierla y Selas. Cada área, frente y llama conserva el producto y la hora de
   observación propios; los círculos aproximados solo desaparecen cuando existe
@@ -94,7 +108,9 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
   productos entregados; metadatos cacheados quince minutos.
 - EFFIS: área recorrida. La API vectorial se comprueba como máximo una vez por
   hora; el ráster WMS legado, cada seis horas. La interfaz muestra por separado
-  lectura, fecha del producto y última modificación real en la zona.
+  lectura, fecha del producto y última modificación real en la zona. Para la
+  ventana reciente de 48 horas clasifica cada geometría por `lastFireDate` o
+  `fireDate`; `lastupdate` solo describe el procesamiento de EFFIS.
 - NASA GIBS: detecciones térmicas VIIRS de NOAA-20 y Suomi NPP, más
   humo/aerosoles VIIRS. La captura reutiliza calor durante 30 minutos y humo
   durante 6 horas; las URLs versionadas permiten que navegador/proxy conserven

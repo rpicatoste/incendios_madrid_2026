@@ -11,6 +11,7 @@ export type SituationPoint = {
   source: string;
   sourceLabel: string;
   sourceUpdatedAt: string;
+  sourceObservedAt: string;
 };
 
 export type FireIncident = {
@@ -28,6 +29,7 @@ export type FireIncident = {
   source: string;
   sourceLabel: string;
   sourceUpdatedAt: string;
+  sourceObservedAt: string;
 };
 
 export type RegionData = {
@@ -64,6 +66,7 @@ const madridPoint = (
   source: MADRID_SOURCE,
   sourceLabel: "Comunidad de Madrid",
   sourceUpdatedAt: "24 jul · 23:30",
+  sourceObservedAt: "2026-07-24T23:30:00+02:00",
 });
 
 export const defaultRegionData: RegionData = {
@@ -101,6 +104,7 @@ export const defaultRegionData: RegionData = {
       source: DSN_SOURCE,
       sourceLabel: "Departamento de Seguridad Nacional",
       sourceUpdatedAt: "24 jul · 08:00",
+      sourceObservedAt: "2026-07-24T08:00:00+02:00",
     },
     {
       id: "navaluenga",
@@ -113,6 +117,7 @@ export const defaultRegionData: RegionData = {
       source: DSN_SOURCE,
       sourceLabel: "Departamento de Seguridad Nacional",
       sourceUpdatedAt: "24 jul · 08:00",
+      sourceObservedAt: "2026-07-24T08:00:00+02:00",
     },
     {
       id: "el-tiemblo",
@@ -125,6 +130,7 @@ export const defaultRegionData: RegionData = {
       source: DSN_SOURCE,
       sourceLabel: "Departamento de Seguridad Nacional",
       sourceUpdatedAt: "24 jul · 08:00",
+      sourceObservedAt: "2026-07-24T08:00:00+02:00",
     },
     {
       id: "la-mierla",
@@ -137,6 +143,7 @@ export const defaultRegionData: RegionData = {
       source: GUADALAJARA_RESTRICTIONS_LIFTED_SOURCE,
       sourceLabel: "Gobierno de Castilla-La Mancha",
       sourceUpdatedAt: "26 jul",
+      sourceObservedAt: "2026-07-26T12:00:00+02:00",
     },
     {
       id: "almorox",
@@ -149,6 +156,7 @@ export const defaultRegionData: RegionData = {
       source: DSN_SOURCE,
       sourceLabel: "Departamento de Seguridad Nacional",
       sourceUpdatedAt: "24 jul · 08:00",
+      sourceObservedAt: "2026-07-24T08:00:00+02:00",
     },
   ],
   fires: [
@@ -165,6 +173,7 @@ export const defaultRegionData: RegionData = {
       source: DSN_SOURCE,
       sourceLabel: "Departamento de Seguridad Nacional",
       sourceUpdatedAt: "24 jul · 08:00",
+      sourceObservedAt: "2026-07-24T08:00:00+02:00",
     },
     {
       id: "burgohondo-fire",
@@ -179,6 +188,7 @@ export const defaultRegionData: RegionData = {
       source: DSN_SOURCE,
       sourceLabel: "Departamento de Seguridad Nacional",
       sourceUpdatedAt: "24 jul · 08:00",
+      sourceObservedAt: "2026-07-24T08:00:00+02:00",
     },
     {
       id: "la-mierla-fire",
@@ -195,6 +205,7 @@ export const defaultRegionData: RegionData = {
       source: CLM_SOURCE,
       sourceLabel: "Gobierno de Castilla-La Mancha",
       sourceUpdatedAt: "23 jul",
+      sourceObservedAt: "2026-07-23T12:00:00+02:00",
     },
   ],
 };

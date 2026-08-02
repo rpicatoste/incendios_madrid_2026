@@ -57,6 +57,13 @@ y volver a iniciar `foco-app.service`.
   pausadas con la pestaña oculta y respetando `prefers-reduced-motion`.
 - Fuera de Madrid no inferir evacuaciones o confinamientos desde perímetros,
   niveles o proximidad: exigir una relación oficial nominal o estructurada.
+- La vista activa solo muestra órdenes, puntos y observaciones con una fecha de
+  fuente u observación de 48 horas como máximo. La hora a la que FOCO descarga
+  o procesa un dato nunca renueva su vigencia. Todo lo anterior se conserva en
+  la capa histórica, apagada por defecto.
+- Separar siempre el estado del incendio de las medidas sobre población: un
+  incendio puede seguir activo, estabilizado o en control sin que continúen las
+  evacuaciones, confinamientos o puntos de acogida anteriores.
 - Los snapshots históricos deben ser inmutables y no consultar fuentes remotas.
 - Una captura remota inválida o transparente no sustituye una copia válida.
 - Una capa conservada debe marcarse como desactualizada y exponer la fecha real
@@ -86,6 +93,8 @@ y volver a iniciar `foco-app.service`.
   EFFIS legado 6 horas. Las URLs cliente versionadas son inmutables.
 - EFFIS: producto diario, sin hora fija; consultar el vector estructurado como
   máximo una vez por hora y el ráster legado de respaldo cada seis horas.
+  Para decidir si aparece en la vista reciente usar `lastFireDate` o `fireDate`,
+  nunca `lastupdate`, que puede reflejar procesamiento posterior.
 - Copernicus EMSR900 y EMSR898: todas las AOI con producto entregado; metadatos
   cacheados quince minutos, originales inmutables guardados en disco privado y
   geometría cliente recalculada solo si cambia su versión. NASA GIBS y

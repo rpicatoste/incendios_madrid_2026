@@ -25,6 +25,76 @@ async function request(path = "/", init) {
   return worker.fetch(new Request(`http://localhost${path}`, init), environment, context);
 }
 
+test("classifies freshness from the observation time with a strict 48 hour window", async () => {
+  const { isRecentObservation, parseObservationTime, RECENT_DATA_WINDOW_MS } = await import(
+    "../lib/data-freshness.ts"
+  );
+  const reference = Date.parse("2026-08-02T12:00:00Z");
+  assert.equal(RECENT_DATA_WINDOW_MS, 48 * 60 * 60 * 1000);
+  assert.equal(isRecentObservation("2026-07-31T12:00:00Z", reference), true);
+  assert.equal(isRecentObservation("2026-07-31T11:59:59Z", reference), false);
+  assert.equal(isRecentObservation("2026-08-02T13:00:00Z", reference), true);
+  assert.equal(isRecentObservation("2026-08-02T20:00:00Z", reference), false);
+  assert.equal(isRecentObservation("invalid", reference), false);
+  assert.equal(isRecentObservation(undefined, reference), false);
+  assert.equal(
+    parseObservationTime("2026-08-02T10:54:00"),
+    Date.parse("2026-08-02T10:54:00Z"),
+  );
+});
+
+test("parses the current Madrid restrictions without reviving old fallbacks", async () => {
+  const { parseMadridStatusHtml } = await import("../lib/madrid-status.ts");
+  const html = `
+    <meta property="article:modified_time" content="2026-08-02T11:17:23+02:00">
+    <p><strong>ÚLTIMA ACTUALIZACIÓN - Domingo 2 de agosto, a las 09:00h</strong></p>
+    <p>La situación del incendio se ha declarado como estabilizada.</p>
+    <p>Domingo 2 de agosto continúa la situación operativa 2 del INFOMA 26.</p>
+    <ul>
+      <li>Siguen evacuadas 7 urbanizaciones:
+        <ul>
+          <li>En <strong>Pelayos de la Presa</strong>:
+            <ul><li>El Mirador de Pelayos.</li><li>Las Musas.</li></ul>
+          </li>
+          <li>En <strong>San Martín de Valdeiglesias</strong>:
+            <ul><li>Costa de Madrid.</li><li>San Ramón.</li><li>Javacruz.</li><li>La Javariega.</li><li>Veracruz.</li></ul>
+          </li>
+        </ul>
+      </li>
+      <li>La Comunidad de Madrid cierra la totalidad de los 24 puntos de acogida.</li>
+    </ul>
+    <h3><strong>Carreteras:</strong></h3>
+    <ul><li>Permanece cortada la carretera M-957.</li></ul>
+  `;
+  const status = parseMadridStatusHtml(html, "2026-08-02T13:30:00Z");
+  assert.equal(status.lastUpdated, "2 de agosto · 09:00 h");
+  assert.equal(status.updatedAt, "2026-08-02T09:00:00+02:00");
+  assert.equal(status.incidentStatus, "Situación Operativa 2 · estabilizado");
+  assert.deepEqual(status.evacuated, [
+    "Pelayos de la Presa",
+    "San Martín de Valdeiglesias",
+  ]);
+  assert.equal(status.evacuatedAreaCount, 7);
+  assert.match(status.evacuationDetails["Pelayos de la Presa"], /Las Musas/);
+  assert.match(status.evacuationDetails["San Martín de Valdeiglesias"], /Veracruz/);
+  assert.deepEqual(status.confined, []);
+  assert.deepEqual(status.shelters, []);
+  assert.deepEqual(status.roads, ["M-957"]);
+  assert.deepEqual(status.authoritative, {
+    incident: true,
+    evacuated: true,
+    confined: true,
+    shelters: true,
+    roads: true,
+  });
+
+  const unrecognized = parseMadridStatusHtml(
+    '<meta property="article:modified_time" content="2026-08-02T12:00:00+02:00"><p>Formato nuevo sin estado estructurado.</p>',
+  );
+  assert.equal(unrecognized.authoritative.incident, false);
+  assert.equal(unrecognized.authoritative.evacuated, false);
+});
+
 test("server-renders FOCO Centro with the public security policy", async () => {
   const response = await request("/", { headers: { accept: "text/html" } });
   assert.equal(response.status, 200);
@@ -38,10 +108,11 @@ test("server-renders FOCO Centro with the public security policy", async () => {
 
   const html = await response.text();
   assert.match(html, /<b>FOCO<\/b><small>CENTRO<\/small>/);
-  assert.match(html, /Seguimiento activo/);
+  assert.match(html, /Vista reciente/);
+  assert.match(html, /histórico oculto/);
   assert.match(html, /Humo VIIRS/);
   assert.match(html, /Actualidad/);
-  assert.match(html, /Evacuaciones/);
+  assert.match(html, /Situación/);
   assert.match(html, /Fuentes/);
   assert.match(html, /Abrir panel de situación/);
   assert.match(html, /Copernicus EMSR900 \+ EMSR898/);
@@ -109,6 +180,7 @@ test("keeps upstream access fixed and the production listener private", async ()
     regionData,
     windRoute,
     windField,
+    freshness,
     fnmtCertificate,
   ] = await Promise.all([
     readFile(new URL("../app/api/air/route.ts", import.meta.url), "utf8"),
@@ -128,6 +200,7 @@ test("keeps upstream access fixed and the production listener private", async ()
     readFile(new URL("../lib/region-data.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/wind-field/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/wind-field.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/data-freshness.ts", import.meta.url), "utf8"),
     readFile(new URL("../ops/fnmt-components.pem", import.meta.url), "utf8"),
   ]);
 
@@ -244,7 +317,8 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.equal(dashboard.includes('dashArray: station.carriedForward ? "4 3"'), true);
   assert.match(dashboard, /NASA GIBS · calor VIIRS/);
   assert.match(dashboard, /layerSourceDate/);
-  assert.match(dashboard, /Producto diario, sin hora fija/);
+  assert.match(dashboard, /vista reciente usa la fecha observada del incendio/);
+  assert.match(dashboard, /procesado/);
   assert.match(dashboard, /effis\.csv/);
   assert.match(dashboard, /!hasFrozenSatellite && isLive/);
   assert.match(dashboard, /\[smokeVisible, setSmokeVisible\] = useState\(false\)/);
@@ -306,7 +380,12 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(dashboard, /EMSR900 \+ EMSR898/);
   assert.match(dashboard, /L\.imageOverlay/);
   assert.match(dashboard, /event\.latlng\.lat, event\.latlng\.lng/);
-  assert.match(dashboard, /Frente observado/);
+  assert.match(dashboard, /Frente reciente/);
+  assert.match(dashboard, /isRecentObservation/);
+  assert.match(dashboard, /historicalVisible, setHistoricalVisible\] = useState\(false\)/);
+  assert.match(dashboard, /HISTÓRICO >48 H/);
+  assert.match(dashboard, /lastFireDate \|\| feature\.properties\.fireDate/);
+  assert.match(dashboard, /feature\.properties\.observedAt/);
   assert.match(dashboard, /Centroides representativos; no perímetros oficiales/);
   assert.match(dashboard, /MITECO · calidad del aire/);
   assert.match(dashboard, /\["news", "Actualidad"\]/);
@@ -317,22 +396,32 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(newsRoute, /username: "UMEgob"/);
   assert.match(newsRoute, /analisis\.datosabiertos\.jcyl\.es/);
   assert.match(newsRoute, /fidias\.castillalamancha\.es/);
+  assert.match(newsRoute, /DETECCIÓN/);
+  assert.match(newsRoute, /updatedAt: extinctionAt \|\| controlAt \|\| detectionAt/);
+  assert.doesNotMatch(newsRoute, /extinctionAt \|\| controlAt \|\| readAt/);
   assert.match(newsRoute, /Promise\.allSettled/);
   assert.doesNotMatch(newsRoute, /request\.url|searchParams/);
   assert.match(statusRoute, /getMadridStatus/);
   assert.match(madridStatus, /authoritative/);
   assert.match(madridStatus, /pendingRequest \|\|= fetchMadridStatus/);
   assert.match(madridStatus, /Municipios evacuados/);
+  assert.match(madridStatus, /Siguen evacuadas/);
+  assert.match(madridStatus, /parseMadridStatusHtml/);
+  assert.match(madridStatus, /article:modified_time/);
+  assert.match(madridStatus, /cierra la totalidad de los/);
   assert.match(liveRegion, /status\.authoritative\.evacuated/);
+  assert.match(liveRegion, /status\.authoritative\.incident/);
   assert.match(liveRegion, /nominatim\.openstreetmap\.org\/search/);
   assert.match(liveRegion, /geocodes\.json/);
   assert.match(liveRegion, /live-region\.json/);
   assert.match(liveRegion, /LIVE_REGION_CACHE_TTL_MS = 5/);
-  assert.match(liveRegion, /LIVE_REGION_CACHE_SCHEMA_VERSION = 2/);
+  assert.match(liveRegion, /LIVE_REGION_CACHE_SCHEMA_VERSION = 3/);
+  assert.match(liveRegion, /sourceObservedAt: status\.updatedAt/);
   assert.match(madridStatus, /isShelterSummary/);
   assert.match(regionData, /GUADALAJARA_RESTRICTIONS_LIFTED_SOURCE/);
   assert.match(regionData, /26 de julio se levantaron todas las evacuaciones/);
   assert.match(regionData, /sourceUpdatedAt: "26 jul"/);
+  assert.match(regionData, /sourceObservedAt: "2026-07-26T12:00:00\+02:00"/);
   assert.doesNotMatch(regionData, /guadalajaraEvacuations/);
   assert.doesNotMatch(regionData, /guadalajaraConfinements/);
   assert.doesNotMatch(regionData, /guadalajaraPoint/);
@@ -348,9 +437,11 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(windField, /refreshPromise \|\|=/);
   assert.match(windField, /sourceOk: false/);
   assert.doesNotMatch(windField, /setInterval/);
+  assert.match(freshness, /RECENT_DATA_WINDOW_MS = 48/);
   assert.match(css, /\.topbar\s*\{\s*height:\s*46px;/);
   assert.match(css, /\.forecast-panel\.open\s*\{\s*height:\s*176px;/);
   assert.match(css, /\.wind-particles/);
   assert.match(css, /\.weather-temperature/);
+  assert.match(css, /\.legend-heading--history/);
   assert.doesNotMatch(css, /\.map-legend\.forecast-open\s*\{[^}]*opacity:\s*0/s);
 });

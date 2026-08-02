@@ -178,7 +178,7 @@ const parseSpanishDate = (value: string) => {
     : null;
 };
 
-const fetchLaMierla = async (readAt: string): Promise<OfficialIncident> => {
+const fetchLaMierla = async (): Promise<OfficialIncident> => {
   const login = await fetch(`${FIDIAS_URL}?auth=ANONIMO`, {
     signal: AbortSignal.timeout(8000),
     headers: { "User-Agent": "FOCO-Centro/2.0" },
@@ -211,10 +211,13 @@ const fetchLaMierla = async (readAt: string): Promise<OfficialIncident> => {
   }
   const plain = decodeText(html);
   const level = plain.match(/\bNIVEL:\s*(\d+)/i)?.[1] || "—";
+  const detection = plain.match(/\bDETECCIÓN:\s*(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2})/i)?.[1];
   const control = plain.match(/\bCONTROL:\s*(Sin especificar|\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2})/i)?.[1] || "Sin especificar";
   const extinction = plain.match(/\bEXTINCIÓN:\s*(Sin especificar|\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2})/i)?.[1] || "Sin especificar";
+  const detectionAt = detection ? parseSpanishDate(detection) : null;
   const extinctionAt = parseSpanishDate(extinction);
   const controlAt = parseSpanishDate(control);
+  if (!detectionAt) throw new Error("FIDIAS no publicó la detección de La Mierla");
   const status = extinctionAt ? "Extinguido" : controlAt ? "Controlado" : `Nivel ${level}`;
   return {
     id: "la-mierla",
@@ -226,8 +229,8 @@ const fetchLaMierla = async (readAt: string): Promise<OfficialIncident> => {
       : controlAt
         ? `Control registrado ${control}`
         : "Control y extinción: sin especificar",
-    updatedAt: extinctionAt || controlAt || readAt,
-    updatedLabel: extinctionAt || controlAt ? undefined : "FIDIAS leído",
+    updatedAt: extinctionAt || controlAt || detectionAt,
+    updatedLabel: extinctionAt || controlAt ? undefined : `Detectado ${detection}`,
     url: `${FIDIAS_URL}?auth=ANONIMO`,
     source: "FIDIAS · Junta de Castilla-La Mancha",
   };
@@ -245,7 +248,7 @@ export async function GET() {
     fetchHtml(CLM_URL),
     fetchHtml(DSN_URL),
     fetchBurgohondo(),
-    fetchLaMierla(readAt),
+    fetchLaMierla(),
     getMadridStatus(),
   ]);
   const profileResults = results.slice(0, xProfiles.length);
@@ -269,15 +272,18 @@ export async function GET() {
     .slice(0, 14);
 
   const incidents: OfficialIncident[] = [];
-  if (madridStatusResult.status === "fulfilled") {
+  if (
+    madridStatusResult.status === "fulfilled" &&
+    (madridStatusResult.value as MadridStatus).authoritative.incident
+  ) {
     const status = madridStatusResult.value as MadridStatus;
     incidents.push({
       id: "sierra-oeste",
       name: "Sierra Oeste",
       province: "Madrid · Toledo",
       status: status.incidentStatus,
-      detail: "Emergencia de interés nacional",
-      updatedAt: status.fetchedAt,
+      detail: "Estado operativo publicado por la Comunidad de Madrid",
+      updatedAt: status.updatedAt,
       updatedLabel: status.lastUpdated,
       url: MADRID_URL,
       source: "Comunidad de Madrid",

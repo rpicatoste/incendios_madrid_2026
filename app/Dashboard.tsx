@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type * as Leaflet from "leaflet";
 import {
   defaultRegionData,
+  type FireIncident,
   type RegionData,
   type SituationPoint,
   type StatusKind,
@@ -16,6 +17,10 @@ import type {
   EffisAreaFeatureProperties,
   EffisAreaMap,
 } from "../lib/effis-area-status";
+import {
+  isRecentObservation,
+  parseObservationTime,
+} from "../lib/data-freshness";
 
 declare global {
   interface Window {
@@ -81,10 +86,15 @@ type WindFieldState = "idle" | "loading" | "refreshing" | "ready" | "stale" | "e
 
 type LiveStatus = {
   lastUpdated: string;
+  updatedAt?: string;
+  incidentStatus?: string;
   evacuated: string[];
+  evacuatedAreaCount?: number;
+  confined?: string[];
   shelters: string[];
   roads: string[];
   fetchedAt: string;
+  sourceOk?: boolean;
 };
 
 type SnapshotData = {
@@ -188,15 +198,19 @@ const REFRESH_INTERVALS = {
   forecast: 15 * 60 * 1000,
 } as const;
 
+const isOperationalFire = (fire: FireIncident, referenceTime: number) =>
+  isRecentObservation(fire.sourceObservedAt, referenceTime) &&
+  !/extinguid|finalizad/i.test(fire.status);
+
 const fallbackStatus: LiveStatus = {
   lastUpdated: "24 de julio · 23:30 h",
-  evacuated: defaultRegionData.points
-    .filter((point) => point.kind === "evacuado" && point.province === "Madrid")
-    .map((point) => point.name),
-  shelters: defaultRegionData.points
-    .filter((point) => point.kind === "acogida")
-    .map((point) => point.name),
-  roads: ["M-50", "M-540", "M-501", "M-541", "M-510", "M-512", "M-531", "M-539", "M-533", "M-521"],
+  updatedAt: "2026-07-24T23:30:00+02:00",
+  incidentStatus: "Situación pendiente de una lectura oficial reciente",
+  evacuated: [],
+  evacuatedAreaCount: 0,
+  confined: [],
+  shelters: [],
+  roads: [],
   fetchedAt: "",
 };
 
@@ -306,7 +320,7 @@ const formatSnapshotTime = (value: string) =>
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  }).format(new Date(parseObservationTime(value)));
 
 const formatSourceDate = (value: string) =>
   new Intl.DateTimeFormat("es-ES", {
@@ -365,6 +379,7 @@ export default function Dashboard() {
   const [heatVisible, setHeatVisible] = useState(true);
   const [burntVisible, setBurntVisible] = useState(true);
   const [frontVisible, setFrontVisible] = useState(true);
+  const [historicalVisible, setHistoricalVisible] = useState(false);
   const [windParticlesVisible, setWindParticlesVisible] = useState(false);
   const [smokeVisible, setSmokeVisible] = useState(false);
   const [fireAreasVisible, setFireAreasVisible] = useState(true);
@@ -387,6 +402,7 @@ export default function Dashboard() {
   const [regionReadAt, setRegionReadAt] = useState("");
   const [weatherReadAt, setWeatherReadAt] = useState("");
   const [baseMapReadAt, setBaseMapReadAt] = useState("");
+  const [freshnessNow, setFreshnessNow] = useState(0);
 
   const selectedSnapshotSummary =
     snapshotIndex === null ? null : snapshots[snapshotIndex] || null;
@@ -441,20 +457,169 @@ export default function Dashboard() {
       ? null
       : windMovementDirection(currentWindDirection);
 
+  const snapshotReferenceTime = Date.parse(
+    selectedSnapshotSummary?.capturedAt || "",
+  );
+  const freshnessReferenceTime =
+    !isLive && Number.isFinite(snapshotReferenceTime)
+      ? snapshotReferenceTime
+      : freshnessNow;
+
+  const displayFires = useMemo(() => {
+    if (!isLive || !officialIncidents.length) return displayRegion.fires;
+    return displayRegion.fires.map((fire) => {
+      const incidentId =
+        fire.id === "burgohondo-fire"
+          ? "burgohondo"
+          : fire.id === "la-mierla-fire"
+            ? "la-mierla"
+            : fire.id;
+      const incident = officialIncidents.find((item) => item.id === incidentId);
+      if (!incident) return fire;
+      return {
+        ...fire,
+        level: incident.status,
+        status: incident.status,
+        detail: incident.detail,
+        source: incident.url,
+        sourceLabel: incident.source,
+        sourceUpdatedAt: incident.updatedLabel || formatSnapshotTime(incident.updatedAt),
+        sourceObservedAt: incident.updatedAt,
+      };
+    });
+  }, [displayRegion.fires, isLive, officialIncidents]);
+
+  const recentPoints = useMemo(
+    () =>
+      displayRegion.points.filter((point) =>
+        isRecentObservation(point.sourceObservedAt, freshnessReferenceTime),
+      ),
+    [displayRegion.points, freshnessReferenceTime],
+  );
+  const recentFires = useMemo(
+    () =>
+      displayFires.filter((fire) =>
+        isOperationalFire(fire, freshnessReferenceTime),
+      ),
+    [displayFires, freshnessReferenceTime],
+  );
+  const historicalFires = useMemo(
+    () =>
+      displayFires.filter(
+        (fire) => !isOperationalFire(fire, freshnessReferenceTime),
+      ),
+    [displayFires, freshnessReferenceTime],
+  );
+  const visibleFires = useMemo(
+    () =>
+      historicalVisible
+        ? [...recentFires, ...historicalFires]
+        : recentFires,
+    [historicalFires, historicalVisible, recentFires],
+  );
+  const historicalPoints = useMemo(
+    () =>
+      displayRegion.points.filter(
+        (point) =>
+          !isRecentObservation(point.sourceObservedAt, freshnessReferenceTime),
+      ),
+    [displayRegion.points, freshnessReferenceTime],
+  );
+
   const visiblePoints = useMemo(
-    () => displayRegion.points.filter((point) => point.kind === activeList),
-    [activeList, displayRegion.points],
+    () =>
+      (historicalVisible
+        ? [...recentPoints, ...historicalPoints]
+        : recentPoints
+      ).filter((point) => point.kind === activeList),
+    [activeList, historicalPoints, historicalVisible, recentPoints],
   );
 
   const counts = useMemo(
     () => ({
-      evacuado: displayRegion.points.filter((point) => point.kind === "evacuado").length,
-      confinado: displayRegion.points.filter((point) => point.kind === "confinado").length,
-      acogida: displayRegion.points.filter((point) => point.kind === "acogida").length,
-      seguimiento: displayRegion.points.filter((point) => point.kind === "seguimiento").length,
+      evacuado: recentPoints.filter((point) => point.kind === "evacuado").length,
+      confinado: recentPoints.filter((point) => point.kind === "confinado").length,
+      acogida: recentPoints.filter((point) => point.kind === "acogida").length,
+      seguimiento: recentPoints.filter((point) => point.kind === "seguimiento").length,
     }),
-    [displayRegion.points],
+    [recentPoints],
   );
+
+  const statusIsRecent = isRecentObservation(
+    displayStatus.updatedAt,
+    freshnessReferenceTime,
+  );
+  const recentMadridEvacuationPoints = recentPoints.filter(
+    (point) => point.kind === "evacuado" && point.province === "Madrid",
+  ).length;
+  const recentMadridEvacuationCount = statusIsRecent
+    ? displayStatus.evacuatedAreaCount ?? recentMadridEvacuationPoints
+    : 0;
+  const recentMadridConfinementCount = statusIsRecent
+    ? displayStatus.confined?.length ??
+      recentPoints.filter(
+        (point) => point.kind === "confinado" && point.province === "Madrid",
+      ).length
+    : 0;
+  const recentEvacuationCount =
+    counts.evacuado -
+    recentMadridEvacuationPoints +
+    recentMadridEvacuationCount;
+  const recentRoads = statusIsRecent ? displayStatus.roads : [];
+  const operationalLevel = statusIsRecent
+    ? displayStatus.incidentStatus?.match(/\b([0-3])\b/)?.[1] || "·"
+    : "·";
+  const effisObservationDates = (cachedEffisMap?.features || [])
+    .map((feature) =>
+      feature.properties.lastFireDate || feature.properties.fireDate,
+    )
+    .filter((value): value is string => Boolean(value));
+  const newestEffisObservation = [...effisObservationDates].sort(
+    (left, right) => Date.parse(right) - Date.parse(left),
+  )[0];
+  const recentEffisCount = effisObservationDates.filter((value) =>
+    isRecentObservation(value, freshnessReferenceTime),
+  ).length;
+  const recentCopernicusAreaCount = (displayFireMap?.features || []).filter(
+    (feature) =>
+      feature.properties?.kind === "burnt-area" &&
+      isRecentObservation(
+        feature.properties.observedAt,
+        freshnessReferenceTime,
+      ),
+  ).length;
+  const recentCopernicusFrontCount = (displayFireMap?.features || []).filter(
+    (feature) =>
+      (feature.properties?.kind === "fire-front" ||
+        feature.properties?.kind === "active-flame") &&
+      isRecentObservation(
+        feature.properties.observedAt,
+        freshnessReferenceTime,
+      ),
+  ).length;
+  const heatSourceIsRecent = displaySatellite
+    ? isRecentObservation(
+        displaySatellite.layerSourceDate?.heat,
+        freshnessReferenceTime,
+      )
+    : isLive;
+  const smokeSourceIsRecent = displaySatellite
+    ? isRecentObservation(
+        displaySatellite.layerSourceDate?.smoke,
+        freshnessReferenceTime,
+      )
+    : isLive;
+
+  useEffect(() => {
+    const refreshFreshness = () => setFreshnessNow(Date.now());
+    refreshFreshness();
+    const timer = window.setInterval(refreshFreshness, 60 * 1000);
+    document.addEventListener("visibilitychange", refreshFreshness);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshFreshness);
+    };
+  }, []);
 
   useEffect(() => {
     const privacyNavigator = navigator as Navigator & { globalPrivacyControl?: boolean };
@@ -1217,17 +1382,37 @@ export default function Dashboard() {
     const L = window.L;
     effisAreaLayerRef.current.clearLayers();
     if (!cachedEffisMap?.features?.length) return;
+    const features = cachedEffisMap.features.filter((feature) => {
+      const observed =
+        feature.properties.lastFireDate || feature.properties.fireDate;
+      return (
+        isRecentObservation(observed, freshnessReferenceTime) ||
+        historicalVisible
+      );
+    });
+    if (!features.length) return;
     const readAt = cachedEffisMap.source.readAt
       ? formatSnapshotTime(cachedEffisMap.source.readAt)
       : "sin hora";
-    L.geoJSON<EffisAreaFeatureProperties>(cachedEffisMap, {
+    L.geoJSON<EffisAreaFeatureProperties>(
+      { ...cachedEffisMap, features },
+      {
       renderer: canvasRendererRef.current,
       bubblingMouseEvents: false,
-      style: {
-        color: "#84483a",
-        weight: 1,
-        fillColor: "#b9684e",
-        fillOpacity: 0.24,
+      style: (feature) => {
+        const observed =
+          feature?.properties?.lastFireDate || feature?.properties?.fireDate;
+        const historical = !isRecentObservation(
+          observed,
+          freshnessReferenceTime,
+        );
+        return {
+          color: historical ? "#807773" : "#84483a",
+          weight: 1,
+          dashArray: historical ? "5 4" : undefined,
+          fillColor: historical ? "#9b918c" : "#b9684e",
+          fillOpacity: historical ? 0.14 : 0.24,
+        };
       },
       onEachFeature: (feature, layer) => {
         const properties = feature.properties;
@@ -1239,17 +1424,28 @@ export default function Dashboard() {
           : "Superficie cartografiada sin área publicada.";
         const observed = properties.lastFireDate || properties.fireDate;
         const updated = properties.lastUpdate;
+        const historical = !isRecentObservation(
+          observed,
+          freshnessReferenceTime,
+        );
         layer
           .bindPopup(
-            `<div class="foco-popup"><span class="popup-kicker" style="color:#8d4938">EFFIS · ÁREA RECORRIDA</span><strong>${escapeHtml(location)}</strong><p>${escapeHtml(area)}</p><small>Producto diario${observed ? ` · incendio observado ${escapeHtml(formatSnapshotTime(observed))}` : ""}${updated ? ` · actualizado ${escapeHtml(formatSnapshotTime(updated))}` : ""} · lectura FOCO ${escapeHtml(readAt)}${cachedEffisMap.source.stale ? " · última copia válida" : ""}</small></div>`,
+            `<div class="foco-popup"><span class="popup-kicker" style="color:#8d4938">EFFIS · ${historical ? "HISTÓRICO >48 H" : "OBSERVACIÓN RECIENTE"}</span><strong>${escapeHtml(location)}</strong><p>${escapeHtml(area)}</p><small>Producto diario${observed ? ` · incendio observado ${escapeHtml(formatSnapshotTime(observed))}` : ""}${updated ? ` · procesado ${escapeHtml(formatSnapshotTime(updated))}` : ""} · lectura FOCO ${escapeHtml(readAt)}${cachedEffisMap.source.stale ? " · última copia válida" : ""}</small></div>`,
             { closeButton: false },
           )
           .on("click", (event: Leaflet.LeafletMouseEvent) =>
             requestForecast(event.latlng.lat, event.latlng.lng),
           );
       },
-    }).addTo(effisAreaLayerRef.current);
-  }, [cachedEffisMap, mapReady, requestForecast]);
+    },
+    ).addTo(effisAreaLayerRef.current);
+  }, [
+    cachedEffisMap,
+    freshnessReferenceTime,
+    historicalVisible,
+    mapReady,
+    requestForecast,
+  ]);
 
   useEffect(() => {
     if (
@@ -1267,12 +1463,21 @@ export default function Dashboard() {
 
     const source = displayFireMap.source;
     const areaFeatures = displayFireMap.features.filter(
-      (feature) => feature.properties?.kind === "burnt-area",
+      (feature) =>
+        feature.properties?.kind === "burnt-area" &&
+        (isRecentObservation(
+          feature.properties.observedAt,
+          freshnessReferenceTime,
+        ) || historicalVisible),
     );
     const frontFeatures = displayFireMap.features.filter(
       (feature) =>
-        feature.properties?.kind === "fire-front" ||
-        feature.properties?.kind === "active-flame",
+        (feature.properties?.kind === "fire-front" ||
+          feature.properties?.kind === "active-flame") &&
+        (isRecentObservation(
+          feature.properties.observedAt,
+          freshnessReferenceTime,
+        ) || historicalVisible),
     );
 
     if (areaFeatures.length) {
@@ -1281,23 +1486,34 @@ export default function Dashboard() {
         {
         renderer: canvasRendererRef.current,
         bubblingMouseEvents: false,
-        style: {
-          color: "#713a31",
-          weight: 1.2,
-          fillColor: "#a45b48",
-          fillOpacity: 0.34,
+        style: (feature) => {
+          const historical = !isRecentObservation(
+            feature?.properties?.observedAt,
+            freshnessReferenceTime,
+          );
+          return {
+            color: historical ? "#77706d" : "#713a31",
+            weight: 1.2,
+            dashArray: historical ? "5 4" : undefined,
+            fillColor: historical ? "#99908c" : "#a45b48",
+            fillOpacity: historical ? 0.16 : 0.34,
+          };
         },
         onEachFeature: (feature, layer) => {
           const properties = feature.properties;
           const observed = properties.observedAt
             ? formatSnapshotTime(properties.observedAt)
             : "hora no disponible";
+          const historical = !isRecentObservation(
+            properties.observedAt,
+            freshnessReferenceTime,
+          );
           const area = properties.mappedAreaHectares
             ? `${properties.mappedAreaHectares.toLocaleString("es-ES")} ha cartografiadas en este producto.`
             : "Delimitación del último producto entregado.";
           layer
             .bindPopup(
-              `<div class="foco-popup"><span class="popup-kicker" style="color:#8d4938">COPERNICUS · ÁREA CARTOGRAFIADA</span><strong>${escapeHtml(properties.areaName || properties.label)}</strong><p>${escapeHtml(area)}</p><small>${escapeHtml(properties.activationCode || "Copernicus")} · ${escapeHtml(properties.product || "producto")}, observado ${escapeHtml(observed)} · lectura ${escapeHtml(formatSnapshotTime(source.readAt))}</small></div>`,
+              `<div class="foco-popup"><span class="popup-kicker" style="color:#8d4938">COPERNICUS · ${historical ? "HISTÓRICO >48 H" : "ÁREA RECIENTE"}</span><strong>${escapeHtml(properties.areaName || properties.label)}</strong><p>${escapeHtml(area)}</p><small>${escapeHtml(properties.activationCode || "Copernicus")} · ${escapeHtml(properties.product || "producto")}, observado ${escapeHtml(observed)} · lectura ${escapeHtml(formatSnapshotTime(source.readAt))}</small></div>`,
               { closeButton: false },
             )
             .on("click", (event: Leaflet.LeafletMouseEvent) =>
@@ -1316,9 +1532,19 @@ export default function Dashboard() {
           bubblingMouseEvents: false,
           style: (feature) =>
             feature?.properties?.kind === "fire-front"
-              ? { color: "#ffcc3d", weight: 4, opacity: 0.95, dashArray: "8 5" }
+              ? {
+                  color: "#ffcc3d",
+                  weight: 4,
+                  opacity: isRecentObservation(
+                    feature.properties.observedAt,
+                    freshnessReferenceTime,
+                  )
+                    ? 0.95
+                    : 0.45,
+                  dashArray: "8 5",
+                }
               : {},
-          pointToLayer: (_feature, latlng) =>
+          pointToLayer: (feature, latlng) =>
             L.circleMarker(latlng, {
               renderer: canvasRendererRef.current,
               radius: 3.5,
@@ -1326,7 +1552,12 @@ export default function Dashboard() {
               weight: 1,
               fillColor: "#ff5a32",
               bubblingMouseEvents: false,
-              fillOpacity: 0.95,
+              fillOpacity: isRecentObservation(
+                feature.properties.observedAt,
+                freshnessReferenceTime,
+              )
+                ? 0.95
+                : 0.4,
             }),
           onEachFeature: (feature, layer) => {
             const isFront = feature.properties?.kind === "fire-front";
@@ -1334,15 +1565,25 @@ export default function Dashboard() {
             const observed = properties?.observedAt
               ? formatSnapshotTime(properties.observedAt)
               : "hora no disponible";
+            const historical = !isRecentObservation(
+              properties?.observedAt,
+              freshnessReferenceTime,
+            );
             layer.bindPopup(
-              `<div class="foco-popup"><span class="popup-kicker" style="color:#d88713">COPERNICUS · ${isFront ? "FRENTE OBSERVADO" : "LLAMA ACTIVA OBSERVADA"}</span><strong>${escapeHtml(properties?.areaName || properties?.label)}</strong><p>${isFront ? "Línea de frente de la observación más reciente que publicó esta geometría." : "Detección puntual incluida en el último producto que publicó llamas activas."}</p><small>${escapeHtml(properties?.activationCode || "Copernicus")} · observado ${escapeHtml(observed)} · no equivale a posición actual en tiempo real</small></div>`,
+              `<div class="foco-popup"><span class="popup-kicker" style="color:#d88713">COPERNICUS · ${historical ? "HISTÓRICO >48 H" : isFront ? "FRENTE RECIENTE" : "LLAMA RECIENTE"}</span><strong>${escapeHtml(properties?.areaName || properties?.label)}</strong><p>${isFront ? "Línea de frente de la observación más reciente que publicó esta geometría." : "Detección puntual incluida en el último producto que publicó llamas activas."}</p><small>${escapeHtml(properties?.activationCode || "Copernicus")} · observado ${escapeHtml(observed)} · no equivale a posición actual en tiempo real</small></div>`,
               { closeButton: false },
             );
           },
         },
       ).addTo(copernicusFrontLayerRef.current);
     }
-  }, [displayFireMap, mapReady, requestForecast]);
+  }, [
+    displayFireMap,
+    freshnessReferenceTime,
+    historicalVisible,
+    mapReady,
+    requestForecast,
+  ]);
 
   useEffect(() => {
     if (!mapReady || !situationLayerRef.current || !window.L) return;
@@ -1351,6 +1592,11 @@ export default function Dashboard() {
 
     displayRegion.points.forEach((point) => {
       if (!activeKinds[point.kind]) return;
+      const historical = !isRecentObservation(
+        point.sourceObservedAt,
+        freshnessReferenceTime,
+      );
+      if (historical && !historicalVisible) return;
       const meta = kindMeta[point.kind];
       const marker = L.marker([point.lat, point.lon], {
         icon: L.divIcon({
@@ -1363,23 +1609,36 @@ export default function Dashboard() {
       });
       marker
         .bindPopup(
-          `<div class="foco-popup"><span class="popup-kicker" style="color:${meta.color}">${meta.label} · ${escapeHtml(point.province)}</span><strong>${escapeHtml(point.name)}</strong><p>${escapeHtml(point.detail)}</p><small>${escapeHtml(point.sourceLabel)} · ${escapeHtml(point.sourceUpdatedAt)}<br>Punto representativo geocodificado; no es un perímetro oficial.</small></div>`,
+          `<div class="foco-popup"><span class="popup-kicker" style="color:${meta.color}">${historical ? "HISTÓRICO >48 H" : meta.label} · ${escapeHtml(point.province)}</span><strong>${escapeHtml(point.name)}</strong><p>${escapeHtml(point.detail)}</p><small>${escapeHtml(point.sourceLabel)} · ${escapeHtml(point.sourceUpdatedAt)}<br>${historical ? "No se presenta como orden vigente. " : "Dato oficial reciente. "}Punto representativo geocodificado; no es un perímetro oficial.</small></div>`,
           { closeButton: false, offset: [0, -9] },
         )
         .addTo(situationLayerRef.current);
     });
-  }, [activeKinds, displayRegion.points, mapReady]);
+  }, [
+    activeKinds,
+    displayRegion.points,
+    freshnessReferenceTime,
+    historicalVisible,
+    mapReady,
+  ]);
 
   useEffect(() => {
     if (!mapReady || !fireAreaLayerRef.current || !window.L) return;
     const L = window.L;
     fireAreaLayerRef.current.clearLayers();
     const mappedFireIds = new Set(
-      (displayFireMap?.features || []).flatMap(
-        (feature) => feature.properties?.fireIds || [],
-      ),
+      (displayFireMap?.features || [])
+        .filter(
+          (feature) =>
+            isRecentObservation(
+              feature.properties?.observedAt,
+              freshnessReferenceTime,
+            ) || historicalVisible,
+        )
+        .flatMap((feature) => feature.properties?.fireIds || []),
     );
-    displayRegion.fires.forEach((fire) => {
+    visibleFires.forEach((fire) => {
+      const historical = !isOperationalFire(fire, freshnessReferenceTime);
       if (mappedFireIds.has(fire.id)) return;
       const areaLabel = fire.areaHectares
         ? ` · ${fire.areaHectares.toLocaleString("es-ES")} ha`
@@ -1387,11 +1646,11 @@ export default function Dashboard() {
       const circle = L.circle([fire.lat, fire.lon], {
         renderer: canvasRendererRef.current,
         radius: fire.radiusKm * 1000,
-        color: "#e74731",
+        color: historical ? "#77706d" : "#e74731",
         weight: 2,
         dashArray: "7 7",
-        fillColor: "#ff6a4d",
-        fillOpacity: 0.16,
+        fillColor: historical ? "#99908c" : "#ff6a4d",
+        fillOpacity: historical ? 0.08 : 0.16,
         bubblingMouseEvents: false,
       });
       circle
@@ -1401,7 +1660,7 @@ export default function Dashboard() {
           className: "fire-area-label",
         })
         .bindPopup(
-          `<div class="foco-popup"><span class="popup-kicker" style="color:#e74731">${escapeHtml(fire.level)} · ${escapeHtml(fire.provinces)}</span><strong>${escapeHtml(fire.name)}</strong><p>${escapeHtml(fire.status)}. ${fire.areaHectares ? `Superficie comunicada: ${fire.areaHectares.toLocaleString("es-ES")} ha. ` : ""}${escapeHtml(fire.detail)}</p><small>Zona orientativa, no perímetro · ${escapeHtml(fire.sourceLabel)} · ${escapeHtml(fire.sourceUpdatedAt)}</small></div>`,
+          `<div class="foco-popup"><span class="popup-kicker" style="color:${historical ? "#77706d" : "#e74731"}">${historical ? "HISTÓRICO >48 H" : escapeHtml(fire.level)} · ${escapeHtml(fire.provinces)}</span><strong>${escapeHtml(fire.name)}</strong><p>${escapeHtml(fire.status)}. ${fire.areaHectares ? `Superficie comunicada: ${fire.areaHectares.toLocaleString("es-ES")} ha. ` : ""}${escapeHtml(fire.detail)}</p><small>Zona orientativa, no perímetro · ${escapeHtml(fire.sourceLabel)} · ${escapeHtml(fire.sourceUpdatedAt)}</small></div>`,
           { closeButton: false },
         )
         .on("click", (event: Leaflet.LeafletMouseEvent) =>
@@ -1409,7 +1668,14 @@ export default function Dashboard() {
         )
         .addTo(fireAreaLayerRef.current);
     });
-  }, [displayFireMap, displayRegion.fires, mapReady, requestForecast]);
+  }, [
+    displayFireMap,
+    freshnessReferenceTime,
+    historicalVisible,
+    mapReady,
+    requestForecast,
+    visibleFires,
+  ]);
 
   useEffect(() => {
     if (!mapReady || !airLayerRef.current || !window.L) return;
@@ -1450,12 +1716,18 @@ export default function Dashboard() {
     toggleLayer(airLayerRef.current, airVisible);
     toggleLayer(heatLayerRef.current, heatVisible && !hasFrozenSatellite && isLive);
     toggleLayer(smokeLayerRef.current, smokeVisible && !hasFrozenSatellite && isLive);
-    toggleLayer(historicalHeatLayerRef.current, heatVisible && hasFrozenSatellite);
+    toggleLayer(
+      historicalHeatLayerRef.current,
+      heatVisible && hasFrozenSatellite && (heatSourceIsRecent || historicalVisible),
+    );
     toggleLayer(
       historicalBurntLayerRef.current,
-      burntVisible && hasFrozenSatellite && !hasStructuredEffis,
+      burntVisible && hasFrozenSatellite && !hasStructuredEffis && historicalVisible,
     );
-    toggleLayer(historicalSmokeLayerRef.current, smokeVisible && hasFrozenSatellite);
+    toggleLayer(
+      historicalSmokeLayerRef.current,
+      smokeVisible && hasFrozenSatellite && (smokeSourceIsRecent || historicalVisible),
+    );
     toggleLayer(effisAreaLayerRef.current, burntVisible && hasStructuredEffis);
     toggleLayer(copernicusBurntLayerRef.current, burntVisible);
     toggleLayer(copernicusFrontLayerRef.current, frontVisible);
@@ -1466,11 +1738,15 @@ export default function Dashboard() {
     burntVisible,
     fireAreasVisible,
     frontVisible,
+    freshnessReferenceTime,
     heatVisible,
+    historicalVisible,
+    heatSourceIsRecent,
     isLive,
     mapReady,
     displaySatellite,
     smokeVisible,
+    smokeSourceIsRecent,
     userVisible,
     cachedEffisMap,
   ]);
@@ -1516,9 +1792,9 @@ export default function Dashboard() {
   };
 
   const fitFires = () => {
-    if (!mapRef.current || !window.L) return;
+    if (!mapRef.current || !window.L || !visibleFires.length) return;
     mapRef.current.fitBounds(
-      window.L.latLngBounds(displayRegion.fires.map((fire) => [fire.lat, fire.lon])),
+      window.L.latLngBounds(visibleFires.map((fire) => [fire.lat, fire.lon])),
       { padding: [42, 42] },
     );
   };
@@ -1649,10 +1925,13 @@ export default function Dashboard() {
       icon: "EU",
       className: "source-icon--eu",
       title: "Copernicus EFFIS · área recorrida",
-      detail: displaySatellite?.effis?.latestUpdateInView
-        ? `Producto diario, sin hora fija · zona Centro actualizada ${formatSnapshotTime(displaySatellite.effis.latestUpdateInView)}` +
-          (displaySatellite.effis.stale ? " · metadatos: última lectura válida" : "") +
-          (displaySatellite.staleLayers?.effis ? " · geometrías: última copia válida" : "")
+      detail: newestEffisObservation
+        ? `Incendio observado por última vez ${formatSnapshotTime(newestEffisObservation)}` +
+          (displaySatellite?.effis?.latestUpdateInView
+            ? ` · procesado ${formatSnapshotTime(displaySatellite.effis.latestUpdateInView)}`
+            : "") +
+          (displaySatellite?.effis?.stale ? " · metadatos: última lectura válida" : "") +
+          (displaySatellite?.staleLayers?.effis ? " · geometrías: última copia válida" : "")
         : displaySatellite?.layerSourceDate?.burnt
           ? `Respaldo ráster del ${formatSourceDate(displaySatellite.layerSourceDate.burnt)}` +
             (displaySatellite.staleLayers?.burnt ? " · última copia válida" : "")
@@ -1772,8 +2051,8 @@ export default function Dashboard() {
           <div className="status-reading" aria-live="polite">
             <span className="live-dot"></span>
             <span>
-              <b>{isLive ? "Seguimiento activo" : "Snapshot"}</b>
-              <small>{isLive ? "Fuentes oficiales + satélite" : formatSnapshotTime(selectedSnapshotSummary?.capturedAt || "")}</small>
+              <b>{isLive ? "Vista reciente" : "Snapshot"}</b>
+              <small>{isLive ? `≤48 h · histórico ${historicalVisible ? "visible" : "oculto"}` : formatSnapshotTime(selectedSnapshotSummary?.capturedAt || "")}</small>
             </span>
           </div>
           <nav className="snapshot-nav" aria-label="Navegar por los snapshots horarios">
@@ -1802,7 +2081,7 @@ export default function Dashboard() {
             <nav className="sidebar-tabs" aria-label="Secciones del panel" role="tablist">
               {([
                 ["news", "Actualidad"],
-                ["evacuations", "Evacuaciones"],
+                ["evacuations", "Situación"],
                 ["sources", "Fuentes"],
               ] as [SidebarTab, string][]).map(([tab, label]) => (
                 <button
@@ -1828,7 +2107,11 @@ export default function Dashboard() {
                 <div className="incident-list" aria-label="Estado oficial de los incendios seguidos">
                   {officialIncidents.map((incident) => {
                     const normalizedStatus = incident.status.toLowerCase();
-                    const tone = normalizedStatus.includes("extinguido")
+                    const recent = isRecentObservation(
+                      incident.updatedAt,
+                      freshnessReferenceTime,
+                    );
+                    const tone = !recent || normalizedStatus.includes("extinguido")
                       ? "out"
                       : normalizedStatus.includes("controlado")
                         ? "controlled"
@@ -1837,16 +2120,14 @@ export default function Dashboard() {
                           : "active";
                     return (
                       <a key={incident.id} className="incident-row" href={incident.url} target="_blank" rel="noreferrer">
-                        <span className={`incident-status incident-status--${tone}`}>{incident.status}</span>
+                        <span className={`incident-status incident-status--${tone}`}>
+                          {recent ? incident.status : `Histórico · ${incident.status}`}
+                        </span>
                         <span>
                           <b>{incident.name}</b>
                           <small>{incident.province} · {incident.detail}</small>
                           <time dateTime={incident.updatedAt}>
-                            {incident.updatedLabel
-                              ? incident.updatedLabel === "FIDIAS leído"
-                                ? `${incident.updatedLabel} ${formatSnapshotTime(incident.updatedAt)}`
-                                : incident.updatedLabel
-                              : formatSnapshotTime(incident.updatedAt)}
+                            {incident.updatedLabel || formatSnapshotTime(incident.updatedAt)}
                             {" · "}{incident.source}
                           </time>
                         </span>
@@ -1860,9 +2141,9 @@ export default function Dashboard() {
                 </div>
 
                 <a className="official-brief" href={OFFICIAL_URL} target="_blank" rel="noreferrer">
-                  <span className="official-brief-kicker">COMUNIDAD DE MADRID · {displayStatus.lastUpdated}</span>
-                  <b>Sierra Oeste: {counts.evacuado} evacuaciones y {counts.confinado} confinamientos señalados</b>
-                  <small>{displayStatus.roads.length} carreteras incluidas en el parte · abrir fuente ↗</small>
+                  <span className="official-brief-kicker">COMUNIDAD DE MADRID · {statusIsRecent ? displayStatus.lastUpdated : "sin parte dentro de 48 h"}</span>
+                  <b>Sierra Oeste: {recentMadridEvacuationCount} zonas con evacuación vigente y {recentMadridConfinementCount} confinamientos</b>
+                  <small>{recentRoads.length} carreteras cortadas en el parte reciente · abrir fuente ↗</small>
                 </a>
 
                 <div className="news-list">
@@ -1888,7 +2169,7 @@ export default function Dashboard() {
                       <b>Copernicus EMSR900 + EMSR898 · Zona Centro</b>
                       <time>
                         {displaySatellite?.copernicus?.areaObservedAt
-                          ? formatSnapshotTime(displaySatellite.copernicus.areaObservedAt)
+                          ? `${formatSnapshotTime(displaySatellite.copernicus.areaObservedAt)}${isRecentObservation(displaySatellite.copernicus.areaObservedAt, freshnessReferenceTime) ? "" : " · histórico"}`
                           : "Esperando caché"}
                       </time>
                     </span>
@@ -1897,7 +2178,7 @@ export default function Dashboard() {
                       {cachedFireMap?.source?.mappedAreaHectares
                         ? `: ${Number(cachedFireMap.source.mappedAreaHectares).toLocaleString("es-ES")} ha sumadas en los últimos productos de cada área`
                         : ""}
-                      . Cada frente y llama muestra su propia hora de observación, no una posición en tiempo real.
+                      . Cada frente y llama muestra su propia hora de observación, no una posición en tiempo real; si supera 48 horas queda oculto por defecto.
                     </p>
                     <small>Abrir activación oficial ↗</small>
                   </a>
@@ -1908,18 +2189,18 @@ export default function Dashboard() {
             {sidebarTab === "evacuations" && (
               <section className="sidebar-tab-panel" aria-label="Evacuaciones y afectaciones">
                 <div className="eyebrow-row">
-                  <span className="eyebrow">{isLive ? "SITUACIÓN ACTUAL" : "VISTA HISTÓRICA"}</span>
+                  <span className="eyebrow">{isLive ? "DATOS RECIENTES · ≤48 H" : "VISTA DEL SNAPSHOT"}</span>
                   <span className="refresh-time">
                     {isLive ? `Parte: ${displayStatus.lastUpdated}` : formatSnapshotTime(selectedSnapshotSummary?.capturedAt || "")}
                   </span>
                 </div>
 
                 <section className="alert-card">
-                  <div className="alert-level"><span>3</span></div>
+                  <div className="alert-level"><span>{operationalLevel}</span></div>
                   <div>
-                    <span className="alert-kicker">EMERGENCIA DE INTERÉS NACIONAL</span>
-                    <h1>Incendios forestales · Zona Centro</h1>
-                    <p>Madrid, Ávila, Toledo y Guadalajara en una única vista operacional y satelital.</p>
+                    <span className="alert-kicker">{statusIsRecent ? displayStatus.incidentStatus || "ESTADO OFICIAL" : "SIN PARTE ≤48 H"}</span>
+                    <h1>Sierra Oeste · estado de Madrid</h1>
+                    <p>Las órdenes de población solo se presentan como vigentes durante 48 horas desde la actualización oficial.</p>
                   </div>
                   <a href={DSN_URL} target="_blank" rel="noreferrer">Parte nacional ↗</a>
                 </section>
@@ -1931,12 +2212,15 @@ export default function Dashboard() {
                       className={activeList === kind ? "active" : ""}
                       onClick={() => setActiveList(kind)}
                     >
-                      <strong>{counts[kind]}</strong>
-                      <span>{kind === "evacuado" ? "evacuación" : kind === "confinado" ? "confinado" : kind === "acogida" ? "acogida" : "seguimiento"}</span>
+                      <strong>{kind === "evacuado" ? recentEvacuationCount : counts[kind]}</strong>
+                      <span>{kind === "evacuado" ? "zonas evacuadas" : kind === "confinado" ? "confinamientos" : kind === "acogida" ? "acogidas" : "seguimientos"}</span>
                     </button>
                   ))}
                 </div>
-                <p className="roads-summary">{displayStatus.roads.length} carreteras señaladas en el parte de Madrid</p>
+                <p className="roads-summary">{recentRoads.length} carreteras cortadas en el parte reciente de Madrid</p>
+                <p className="freshness-summary">
+                  {historicalPoints.length} referencias anteriores a 48 horas están {historicalVisible ? "visibles" : "ocultas"} como histórico.
+                </p>
 
                 <section className="location-section">
                   <div className="section-title">
@@ -1950,14 +2234,14 @@ export default function Dashboard() {
                     </button>
                   </div>
                   <p className="geocode-note">
-                    Los símbolos son puntos representativos geocodificados, no áreas oficiales de evacuación.
+                    Los símbolos recientes proceden de una relación oficial actualizada hace como máximo 48 horas y son puntos representativos, no áreas oficiales.
                     {displayRegion.unmappedLocations?.length
                       ? ` Sin ubicación: ${displayRegion.unmappedLocations.join(", ")}.`
                       : ""}
                   </p>
                   {(activeList === "evacuado" || activeList === "confinado") && (
                     <p className="geocode-note">
-                      Madrid se reconstruye desde su fuente oficial. Fuera de Madrid se muestran relaciones nominales oficiales fechadas: los partes estructurados disponibles no publican localidades evacuadas o confinadas y FOCO no las infiere.
+                      Madrid se reconstruye desde su fuente oficial. Fuera de Madrid no se infieren evacuaciones o confinamientos; las relaciones anteriores solo aparecen al activar el histórico.
                     </p>
                   )}
                   <div className="location-list">
@@ -1966,7 +2250,10 @@ export default function Dashboard() {
                         <span className={`list-symbol list-symbol--${point.kind}`}>{kindMeta[point.kind].icon}</span>
                         <span>
                           <b>{point.name}</b>
-                          <small>{point.province} · {point.sourceUpdatedAt}</small>
+                          <small>
+                            {point.province} · {point.sourceUpdatedAt}
+                            {!isRecentObservation(point.sourceObservedAt, freshnessReferenceTime) ? " · histórico >48 h" : ""}
+                          </small>
                         </span>
                         <i>⌖</i>
                       </button>
@@ -2033,8 +2320,8 @@ export default function Dashboard() {
 
           <section className={`map-legend ${panelOpen ? "forecast-open" : ""}`} aria-label="Leyenda y visibilidad de capas">
             <div className="legend-heading">
-              <b>LEYENDA</b>
-              <small>Pulsa para ocultar o mostrar</small>
+              <b>ACTIVO / RECIENTE</b>
+              <small>observado ≤48 h</small>
             </div>
             <div className="legend-items">
               <button aria-pressed={activeKinds.evacuado} onClick={() => toggleKind("evacuado")}>
@@ -2050,28 +2337,28 @@ export default function Dashboard() {
                 <i className="legend-dot legend-dot--seguimiento"></i><span>Seguimiento</span><em>{activeKinds.seguimiento ? "ON" : "OFF"}</em>
               </button>
               <button aria-pressed={fireAreasVisible} onClick={() => setFireAreasVisible(!fireAreasVisible)}>
-                <i className="legend-area"></i><span>Zona incendio</span><em>{fireAreasVisible ? "ON" : "OFF"}</em>
+                <i className="legend-area"></i><span>Incendio reciente</span><em>{fireAreasVisible ? recentFires.length : "OFF"}</em>
               </button>
               <button
                 aria-pressed={heatVisible}
                 onClick={() => setHeatVisible(!heatVisible)}
                 title="Actividad térmica satelital reciente; orienta sobre actividad, no dibuja un frente exacto"
               >
-                <i className="legend-hotspot"></i><span>Actividad VIIRS</span><em>{heatVisible ? "ON" : "OFF"}</em>
+                <i className="legend-hotspot"></i><span>Actividad VIIRS</span><em>{heatVisible ? heatSourceIsRecent ? "ON" : historicalVisible ? "HIST." : "0" : "OFF"}</em>
               </button>
               <button
                 aria-pressed={burntVisible}
                 onClick={() => setBurntVisible(!burntVisible)}
-                title="EFFIS es un producto diario sin hora fija; FOCO lo comprueba una vez por hora"
+                title="EFFIS es diario: la vista reciente usa la fecha observada del incendio, no la fecha posterior de procesamiento"
               >
-                <i className="legend-burnt"></i><span>Área recorrida</span><em>{burntVisible ? "ON" : "OFF"}</em>
+                <i className="legend-burnt"></i><span>Área reciente</span><em>{burntVisible ? recentEffisCount + recentCopernicusAreaCount : "OFF"}</em>
               </button>
               <button
                 aria-pressed={frontVisible}
                 onClick={() => setFrontVisible(!frontVisible)}
-                title="Última línea de frente y llamas activas cartografiadas por Copernicus; consulta la hora de observación"
+                title="Frentes y llamas observados por Copernicus durante las últimas 48 horas; los anteriores quedan en histórico"
               >
-                <i className="legend-front"></i><span>Frente observado</span><em>{frontVisible ? "ON" : "OFF"}</em>
+                <i className="legend-front"></i><span>Frente reciente</span><em>{frontVisible ? recentCopernicusFrontCount : "OFF"}</em>
               </button>
               <button
                 aria-pressed={windParticlesVisible}
@@ -2092,13 +2379,29 @@ export default function Dashboard() {
                 </em>
               </button>
               <button aria-pressed={smokeVisible} onClick={() => setSmokeVisible(!smokeVisible)}>
-                <i className="legend-smoke"></i><span>Humo VIIRS</span><em>{smokeVisible ? "ON" : "OFF"}</em>
+                <i className="legend-smoke"></i><span>Humo VIIRS</span><em>{smokeVisible ? smokeSourceIsRecent ? "ON" : historicalVisible ? "HIST." : "0" : "OFF"}</em>
               </button>
               <button aria-pressed={airVisible} onClick={() => setAirVisible(!airVisible)}>
                 <i className="legend-air"></i><span>Sensor de aire</span><em>{airVisible ? "ON" : "OFF"}</em>
               </button>
               <button aria-pressed={userVisible} onClick={() => setUserVisible(!userVisible)}>
                 <i className="legend-user"></i><span>Tu posición</span><em>{userVisible ? "ON" : "OFF"}</em>
+              </button>
+            </div>
+            <div className="legend-heading legend-heading--history">
+              <b>HISTÓRICO</b>
+              <small>órdenes y observaciones &gt;48 h</small>
+            </div>
+            <div className="legend-items legend-items--history">
+              <button
+                className="legend-history-toggle"
+                aria-pressed={historicalVisible}
+                onClick={() => setHistoricalVisible(!historicalVisible)}
+                title="Muestra referencias antiguas, áreas recorridas y productos satelitales cuya observación supera 48 horas"
+              >
+                <i className="legend-history">H</i>
+                <span>Mostrar histórico</span>
+                <em>{historicalVisible ? "ON" : "OFF"}</em>
               </button>
             </div>
           </section>

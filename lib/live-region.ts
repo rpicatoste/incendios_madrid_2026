@@ -19,7 +19,7 @@ const dataDirectory =
   process.env.FOCO_DATA_DIR || join(process.cwd(), ".foco-data");
 const geocodeFile = join(dataDirectory, "geocodes.json");
 const liveRegionCacheFile = join(dataDirectory, "cache", "live-region.json");
-const LIVE_REGION_CACHE_SCHEMA_VERSION = 2;
+const LIVE_REGION_CACHE_SCHEMA_VERSION = 3;
 const LIVE_REGION_CACHE_TTL_MS = 5 * 60 * 1000;
 
 const normalizeName = (value: string) =>
@@ -125,7 +125,8 @@ const dynamicPoint = async (
   if (!coordinates) return null;
   const detail =
     kind === "evacuado"
-      ? "Localidad incluida en la relación oficial vigente de evacuaciones."
+      ? status.evacuationDetails[name] ||
+        "Localidad incluida en la relación oficial vigente de evacuaciones."
       : kind === "confinado"
         ? "Localidad incluida en la relación oficial vigente de confinamientos."
         : "Punto de acogida incluido en la relación oficial vigente.";
@@ -139,6 +140,7 @@ const dynamicPoint = async (
     source: MADRID_STATUS_SOURCE,
     sourceLabel: "Comunidad de Madrid",
     sourceUpdatedAt: status.lastUpdated,
+    sourceObservedAt: status.updatedAt,
   };
 };
 
@@ -188,7 +190,21 @@ export const buildLiveRegion = async (status: MadridStatus): Promise<RegionData>
       ? `${status.lastUpdated} · Comunidad de Madrid`
       : `${defaultRegionData.updatedAt} · fuente de Madrid temporalmente no disponible`,
     points: [...preservedPoints, ...results.flatMap((result) => result.points)],
-    fires: defaultRegionData.fires,
+    fires: defaultRegionData.fires.map((fire) =>
+      fire.id === "sierra-oeste" && status.sourceOk && status.authoritative.incident
+        ? {
+            ...fire,
+            level: status.incidentStatus,
+            status: status.incidentStatus,
+            detail:
+              "Estado operativo publicado por la Comunidad de Madrid; la zona circular sigue siendo solo orientativa.",
+            source: MADRID_STATUS_SOURCE,
+            sourceLabel: "Comunidad de Madrid",
+            sourceUpdatedAt: status.lastUpdated,
+            sourceObservedAt: status.updatedAt,
+          }
+        : fire,
+    ),
     ...(unmappedLocations.length ? { unmappedLocations } : {}),
   };
 };
