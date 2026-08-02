@@ -53,7 +53,7 @@ y volver a iniciar `foco-app.service`.
   campo ambiental ni ejecuta animación. Al activarla descarga bajo demanda una
   malla 9×7 compartida por el servidor y cacheada una hora; no hay precalentado
   ni consultas sin usuarios. El navegador interpola el vector local y usa
-  partículas de vida corta: 18 en móvil o 34 en escritorio, limitadas a 15 FPS,
+  partículas de vida corta: 54 en móvil o 102 en escritorio, limitadas a 15 FPS,
   pausadas con la pestaña oculta y respetando `prefers-reduced-motion`.
 - Fuera de Madrid no inferir evacuaciones o confinamientos desde perímetros,
   niveles o proximidad: exigir una relación oficial nominal o estructurada.

@@ -19,7 +19,7 @@ const dataDirectory =
   process.env.FOCO_DATA_DIR || join(process.cwd(), ".foco-data");
 const geocodeFile = join(dataDirectory, "geocodes.json");
 const liveRegionCacheFile = join(dataDirectory, "cache", "live-region.json");
-const LIVE_REGION_CACHE_SCHEMA_VERSION = 1;
+const LIVE_REGION_CACHE_SCHEMA_VERSION = 2;
 const LIVE_REGION_CACHE_TTL_MS = 5 * 60 * 1000;
 
 const normalizeName = (value: string) =>

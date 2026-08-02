@@ -1015,7 +1015,7 @@ export default function Dashboard() {
       canvas.width = Math.round(width * pixelRatio);
       canvas.height = Math.round(height * pixelRatio);
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-      const count = width < 700 ? 18 : 34;
+      const count = width < 700 ? 54 : 102;
       particles = Array.from({ length: count }, () => makeParticle(true));
     };
 

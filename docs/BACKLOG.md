@@ -55,11 +55,12 @@ Revisión del 26 de julio de 2026:
 - FIDIAS y las notas públicas de Castilla-La Mancha no exponen actualmente esa
   relación mediante una fuente pública estructurada. El mapa público de la Red
   de Alerta Nacional tampoco aporta localidades nominales para este fin.
-- FOCO mantiene las relaciones oficiales fechadas ya verificadas de Ávila y
-  Guadalajara, excluye los retornos nominalmente autorizados y no deduce
-  evacuaciones a partir de proximidad, nivel o perímetros. La interfaz explica
-  esta limitación. Se retomará la automatización cuando aparezca una fuente
-  adecuada.
+- FOCO mantiene las relaciones oficiales fechadas ya verificadas y no deduce
+  evacuaciones a partir de proximidad, nivel o perímetros. La nota oficial del
+  26 de julio ordenó el regreso de toda la población y levantó todos los
+  confinamientos del incendio de La Mierla, así que Guadalajara queda solo en
+  seguimiento, sin pines operativos obsoletos. La interfaz explica esta
+  limitación. Se retomará la automatización cuando aparezca una fuente adecuada.
 
 ## 4. Analítica anónima condicionada a privacidad — completado y auditado
 
@@ -93,7 +94,7 @@ Valorar una visualización de pocas partículas, limitada en FPS, reducida en
 móviles y desactivada cuando el usuario solicite movimiento reducido.
 
 La capa empieza apagada y, por tanto, no consulta el viento ambiental ni crea
-un bucle de animación. Al encenderla usa 18 partículas en móvil o 34 en
+un bucle de animación. Al encenderla usa 54 partículas en móvil o 102 en
 escritorio, trazos azules con halo blanco y un máximo real de 15 FPS. Se pausa
 con la pestaña oculta, no captura clics, respeta `prefers-reduced-motion` y
 dispone de un interruptor propio en la leyenda. El 27 de julio se unificó la

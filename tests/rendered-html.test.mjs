@@ -294,7 +294,7 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(dashboard, /weather_code,is_day/);
   assert.match(dashboard, /className="sky-symbol"/);
   assert.match(dashboard, /className="wind-particles"/);
-  assert.match(dashboard, /width < 700 \? 18 : 34/);
+  assert.match(dashboard, /width < 700 \? 54 : 102/);
   assert.match(dashboard, /frameInterval = 1000 \/ 15/);
   assert.match(dashboard, /windParticlesVisible, setWindParticlesVisible\] = useState\(false\)/);
   assert.match(dashboard, /rgba\(0, 105, 190/);
@@ -328,12 +328,14 @@ test("keeps upstream access fixed and the production listener private", async ()
   assert.match(liveRegion, /geocodes\.json/);
   assert.match(liveRegion, /live-region\.json/);
   assert.match(liveRegion, /LIVE_REGION_CACHE_TTL_MS = 5/);
+  assert.match(liveRegion, /LIVE_REGION_CACHE_SCHEMA_VERSION = 2/);
   assert.match(madridStatus, /isShelterSummary/);
-  assert.match(regionData, /guadalajaraEvacuations/);
-  assert.match(regionData, /guadalajaraConfinements/);
-  assert.match(regionData, /guadalajaraPoint\("hiendelaencina"/);
-  assert.match(regionData, /guadalajaraPoint\("albendiego"/);
-  assert.match(regionData, /20 jul · última relación nominal/);
+  assert.match(regionData, /GUADALAJARA_RESTRICTIONS_LIFTED_SOURCE/);
+  assert.match(regionData, /26 de julio se levantaron todas las evacuaciones/);
+  assert.match(regionData, /sourceUpdatedAt: "26 jul"/);
+  assert.doesNotMatch(regionData, /guadalajaraEvacuations/);
+  assert.doesNotMatch(regionData, /guadalajaraConfinements/);
+  assert.doesNotMatch(regionData, /guadalajaraPoint/);
   assert.match(windRoute, /getWindField/);
   assert.match(windRoute, /must-revalidate/);
   assert.match(windField, /api\.open-meteo\.com\/v1\/forecast/);

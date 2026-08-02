@@ -47,15 +47,17 @@ curl -fsS http://127.0.0.1:3000/api/satellite?hour=live\&layer=manifest | jq .
   malla 9×7 de la zona Centro: se descarga bajo demanda, se comparte entre todos
   los usuarios y se conserva una hora en caché persistente, sin precalentado. El
   navegador interpola el vector en cada posición y muestra trazos de vida corta
-  que aparecen y desaparecen: 18 en móvil o 34 en escritorio, limitados a 15 FPS,
+  que aparecen y desaparecen: 54 en móvil o 102 en escritorio, limitados a 15 FPS,
   pausados con la pestaña oculta y desactivados para `prefers-reduced-motion`.
 - Navegación entre snapshots horarios y vivo. La consulta periódica descarga
   solo el índice ligero; cada snapshot completo se obtiene y cachea únicamente
   al seleccionarlo.
 - Evacuaciones y confinamientos de Madrid reconstruidos automáticamente desde
-  la página oficial. Fuera de Madrid se conservan relaciones nominales
-  oficiales fechadas: JCyL, FIDIAS/CLM y RAN no ofrecen actualmente una fuente
-  estructurada equivalente y FOCO nunca infiere localidades afectadas.
+  la página oficial. Fuera de Madrid se conservan únicamente relaciones
+  nominales oficiales fechadas: la nota autonómica del 26 de julio levantó
+  todas las evacuaciones y confinamientos de La Mierla, por lo que Guadalajara
+  queda solo en seguimiento. JCyL, FIDIAS/CLM y RAN no ofrecen actualmente una
+  fuente estructurada equivalente y FOCO nunca infiere localidades afectadas.
 - Pestaña `Actualidad` con estados de Sierra Oeste, Burgohondo y La Mierla,
   además de publicaciones filtradas de fuentes oficiales.
 - Copernicus integra EMSR900 y EMSR898: Brieva, Villa del Prado, La Atalaya, La
